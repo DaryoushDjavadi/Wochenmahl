@@ -1344,9 +1344,10 @@ function WeekView({
                 <ul className="day-meal-list">
                   {slot.meals.map((meal) => {
                     const recipe = recipes.find((r) => r.id === meal.recipeId)
-                    const side =
-                      meal.sideTitle ||
-                      recipes.find((r) => r.id === meal.sideRecipeId)?.title
+                    const sideRecipe = recipes.find(
+                      (r) => r.id === meal.sideRecipeId,
+                    )
+                    const side = meal.sideTitle || sideRecipe?.title
                     const mealSent = sentMealIds.has(meal.id)
                     return (
                       <li key={meal.id} className="day-meal-item">
@@ -1372,10 +1373,62 @@ function WeekView({
                           ) : null}
                         </div>
                         <div className="tags">
-                          {recipe?.kind === 'base' ? (
-                            <span className="tag green">Basis</span>
+                          {recipe ? (
+                            <>
+                              {(() => {
+                                const cat = resolveRecipeCategory(recipe)
+                                return (
+                                  <span
+                                    className={`tag tag-cat tag-cat-${cat}`}
+                                  >
+                                    <CategoryIcon category={cat} size={13} />
+                                    {CATEGORY_LABEL[cat]}
+                                  </span>
+                                )
+                              })()}
+                              {recipe.kind === 'base' &&
+                              resolveRecipeCategory(recipe) !== 'base' ? (
+                                <span className="tag tag-cat tag-cat-base">
+                                  Basis
+                                </span>
+                              ) : null}
+                              {recipe.tags.map((t) => (
+                                <span
+                                  key={`${meal.id}-m-${t}`}
+                                  className={`tag ${tagToneClass(t)}`}
+                                >
+                                  {t}
+                                </span>
+                              ))}
+                            </>
                           ) : null}
-                          {side ? <span className="tag">Beilage</span> : null}
+                          {sideRecipe ? (
+                            <>
+                              {(() => {
+                                const cat = resolveRecipeCategory(sideRecipe)
+                                return (
+                                  <span
+                                    className={`tag tag-cat tag-cat-${cat}`}
+                                  >
+                                    <CategoryIcon category={cat} size={13} />
+                                    {CATEGORY_LABEL[cat]}
+                                  </span>
+                                )
+                              })()}
+                              {sideRecipe.tags.map((t) => (
+                                <span
+                                  key={`${meal.id}-s-${t}`}
+                                  className={`tag ${tagToneClass(t)}`}
+                                >
+                                  {t}
+                                </span>
+                              ))}
+                            </>
+                          ) : side ? (
+                            <span className="tag tag-cat tag-cat-side">
+                              Beilage
+                            </span>
+                          ) : null}
                         </div>
                       </li>
                     )
