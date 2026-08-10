@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  BookPlus,
   CalendarDays,
   CalendarRange,
   Check,
@@ -42,7 +43,7 @@ import {
   subscribeSync,
   type SyncStatus,
 } from './sync/householdSync'
-import type { Ingredient, Recipe, UserId, WeekSlot, Weekday } from './types'
+import type { Ingredient, Pitch, Recipe, UserId, WeekSlot, Weekday } from './types'
 
 type Tab = 'week' | 'pitch' | 'recipes' | 'shop' | 'settings' | 'help'
 
@@ -1390,6 +1391,25 @@ function WeekView({
   )
 }
 
+function pitchBothYes(p: Pitch) {
+  return p.reactions.darius === 'yes' && p.reactions.wendy === 'yes'
+}
+
+function pitchNeedsPoolSave(p: Pitch) {
+  const freeMain = !p.recipeId && !p.poolRecipeId && Boolean(p.title.trim())
+  const freeSide =
+    Boolean(p.sideTitle?.trim()) && !p.sideRecipeId && !p.poolSideRecipeId
+  return freeMain || freeSide
+}
+
+function pitchSavedToPool(p: Pitch) {
+  return Boolean(
+    p.poolRecipeId ||
+      p.poolSideRecipeId ||
+      (p.recipeId && (!p.sideTitle?.trim() || p.sideRecipeId)),
+  )
+}
+
 function PitchView() {
   const currentUser = useStore((s) => s.currentUser)!
   const recipes = useStore((s) => s.recipes)
@@ -1398,12 +1418,16 @@ function PitchView() {
   const weeks = useStore((s) => s.weeks)
   const addPitch = useStore((s) => s.addPitch)
   const reactToPitch = useStore((s) => s.reactToPitch)
+  const promotePitchToPool = useStore((s) => s.promotePitchToPool)
   const [title, setTitle] = useState('')
   const [note, setNote] = useState('')
   const [recipeId, setRecipeId] = useState('')
   const [sideRecipeId, setSideRecipeId] = useState('')
   const [sideFree, setSideFree] = useState('')
   const [attachSide, setAttachSide] = useState(false)
+  const [flash, setFlash] = useState<{ ok: boolean; message: string } | null>(
+    null,
+  )
   const pitches = useMemo(
     () => allPitches.filter((p) => p.weekId === activeWeekId),
     [allPitches, activeWeekId],
@@ -1427,7 +1451,7 @@ function PitchView() {
           <p className="lede">
             {locked
               ? 'Woche ist festgenagelt — zum Weiterpitchen erst wieder öffnen.'
-              : 'Vorschläge pitchen und abstimmen — z. B. Reis + unterschiedliche Beilagen als eigene Pitches.'}
+              : 'Vorschläge pitchen und abstimmen — bei doppeltem Yes könnt ihr freie Pitches in den Rezepte-Pool übernehmen.'}
           </p>
         </div>
         {locked ? (
@@ -1554,52 +1578,85 @@ function PitchView() {
         </button>
       </div>
 
-      {pitches.map((p) => (
-        <article key={p.id} className="pitch-card">
-          <div className="row">
-            <Avatar userId={p.pitchedBy} />
-            <div className="grow">
-              <h3>{mealLabel(p.title, p.sideTitle)}</h3>
-              <p className="muted tiny">
-                von {USERS[p.pitchedBy].name}
-                {p.sideTitle || p.sideRecipeId ? ' · Basis + Beilage' : ''}
-                {p.recipeId ? ' · Rezept verknüpft' : ''}
-              </p>
+      {flash ? (
+        <div className={`flash ${flash.ok ? '' : 'bad'}`}>{flash.message}</div>
+      ) : null}
+
+      {pitches.map((p) => {
+        const bothYes = pitchBothYes(p)
+        const canSave = bothYes && pitchNeedsPoolSave(p)
+        const saved = pitchSavedToPool(p) && !pitchNeedsPoolSave(p)
+        return (
+          <article
+            key={p.id}
+            className={`pitch-card${bothYes ? ' pitch-double-yes' : ''}`}
+          >
+            <div className="row">
+              <Avatar userId={p.pitchedBy} />
+              <div className="grow">
+                <h3>{mealLabel(p.title, p.sideTitle)}</h3>
+                <p className="muted tiny">
+                  von {USERS[p.pitchedBy].name}
+                  {p.sideTitle || p.sideRecipeId ? ' · Basis + Beilage' : ''}
+                  {p.recipeId || p.poolRecipeId ? ' · Rezept verknüpft' : ''}
+                </p>
+              </div>
+              {bothYes ? (
+                <span className="tag tag-bring">Doppel-Yes</span>
+              ) : null}
             </div>
-          </div>
-          {p.note ? <p>{p.note}</p> : null}
-          <div className="reaction">
-            {(
-              [
-                ['yes', 'Yes'],
-                ['maybe', 'Maybe'],
-                ['no', 'Nope'],
-              ] as const
-            ).map(([key, label]) => (
+            {p.note ? <p>{p.note}</p> : null}
+            <div className="reaction">
+              {(
+                [
+                  ['yes', 'Yes'],
+                  ['maybe', 'Maybe'],
+                  ['no', 'Nope'],
+                ] as const
+              ).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  disabled={locked}
+                  className={
+                    p.reactions[currentUser] === key ? `active-${key}` : ''
+                  }
+                  onClick={() => reactToPitch(p.id, key)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="row wrap">
+              {(['darius', 'wendy'] as UserId[]).map((uid) =>
+                p.reactions[uid] ? (
+                  <span key={uid} className="tag green">
+                    {USERS[uid].name}: {p.reactions[uid]}
+                  </span>
+                ) : null,
+              )}
+            </div>
+            {canSave ? (
               <button
-                key={key}
                 type="button"
-                disabled={locked}
-                className={
-                  p.reactions[currentUser] === key ? `active-${key}` : ''
-                }
-                onClick={() => reactToPitch(p.id, key)}
+                className="btn accent sm pitch-pool-btn"
+                onClick={() => {
+                  const res = promotePitchToPool(p.id)
+                  setFlash({ ok: res.ok, message: res.message })
+                }}
               >
-                {label}
+                <BookPlus size={16} aria-hidden />
+                Zum Rezepte-Pool
               </button>
-            ))}
-          </div>
-          <div className="row wrap">
-            {(['darius', 'wendy'] as UserId[]).map((uid) =>
-              p.reactions[uid] ? (
-                <span key={uid} className="tag green">
-                  {USERS[uid].name}: {p.reactions[uid]}
-                </span>
-              ) : null,
-            )}
-          </div>
-        </article>
-      ))}
+            ) : null}
+            {saved && bothYes ? (
+              <p className="muted tiny pitch-pool-done">
+                <Check size={14} aria-hidden /> Schon im Rezepte-Pool
+              </p>
+            ) : null}
+          </article>
+        )
+      })}
     </div>
   )
 }

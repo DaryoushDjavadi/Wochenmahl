@@ -38,6 +38,10 @@ export interface Pitch {
   pitchedBy: UserId
   reactions: Partial<Record<UserId, 'yes' | 'maybe' | 'no'>>
   createdAt: string
+  /** Recipe created from this pitch into the library (free main) */
+  poolRecipeId?: string
+  /** Side recipe created from this pitch into the library (free side) */
+  poolSideRecipeId?: string
 }
 
 export type Weekday = 'mo' | 'di' | 'mi' | 'do' | 'fr' | 'sa' | 'so'

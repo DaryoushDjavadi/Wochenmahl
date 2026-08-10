@@ -764,6 +764,26 @@ p {
   border-color: rgba(208, 213, 221, 0.8);
 }
 
+.pitch-card.pitch-double-yes {
+  border-color: rgba(61, 155, 120, 0.45);
+  background:
+    linear-gradient(160deg, rgba(199, 240, 221, 0.45), transparent 55%),
+    var(--panel);
+}
+
+.pitch-pool-btn {
+  width: 100%;
+  margin-top: 2px;
+}
+
+.pitch-pool-done {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #1f5c44;
+  font-weight: 700;
+}
+
 .reaction {
   display: flex;
   gap: 6px;

@@ -62,6 +62,9 @@ interface Store {
     sideTitle?: string
   }) => void
   reactToPitch: (pitchId: string, reaction: 'yes' | 'maybe' | 'no') => void
+  promotePitchToPool: (
+    pitchId: string,
+  ) => { ok: boolean; message: string; recipeIds: string[] }
   assignSlot: (
     day: Weekday,
     payload: {
@@ -329,6 +332,173 @@ export const useStore = create<Store>()(
                 : p,
             ),
           })
+        },
+
+        promotePitchToPool: (pitchId) => {
+          const user = get().currentUser
+          if (!user) {
+            return { ok: false, message: 'Bitte zuerst einloggen.', recipeIds: [] }
+          }
+          const pitch = get().pitches.find((p) => p.id === pitchId)
+          if (!pitch) {
+            return { ok: false, message: 'Pitch nicht gefunden.', recipeIds: [] }
+          }
+          if (
+            pitch.reactions.darius !== 'yes' ||
+            pitch.reactions.wendy !== 'yes'
+          ) {
+            return {
+              ok: false,
+              message: 'Beide müssen mit Yes abstimmen.',
+              recipeIds: [],
+            }
+          }
+
+          const created: Recipe[] = []
+          let recipeId = pitch.recipeId
+          let sideRecipeId = pitch.sideRecipeId
+          let poolRecipeId = pitch.poolRecipeId
+          let poolSideRecipeId = pitch.poolSideRecipeId
+          const addedLabels: string[] = []
+          const linkedLabels: string[] = []
+
+          const freeMain =
+            !recipeId && !poolRecipeId && Boolean(pitch.title.trim())
+          if (freeMain) {
+            const title = pitch.title.trim()
+            const existing = get().recipes.find(
+              (r) => r.title.trim().toLowerCase() === title.toLowerCase(),
+            )
+            if (existing) {
+              recipeId = existing.id
+              poolRecipeId = existing.id
+              linkedLabels.push(`„${existing.title}“`)
+            } else {
+              const id = uid('r')
+              created.push({
+                id,
+                title,
+                kind: pitch.sideTitle || pitch.sideRecipeId ? 'base' : 'meal',
+                tags: ['pitch'],
+                ingredients: [],
+                notes: pitch.note.trim() || undefined,
+                createdBy: user,
+                createdAt: new Date().toISOString(),
+              })
+              recipeId = id
+              poolRecipeId = id
+              addedLabels.push(`„${title}“`)
+            }
+          }
+
+          const freeSideTitle = pitch.sideTitle?.trim()
+          const freeSide =
+            Boolean(freeSideTitle) && !sideRecipeId && !poolSideRecipeId
+          if (freeSide && freeSideTitle) {
+            const existing = get().recipes.find(
+              (r) =>
+                r.title.trim().toLowerCase() === freeSideTitle.toLowerCase(),
+            )
+            if (existing) {
+              sideRecipeId = existing.id
+              poolSideRecipeId = existing.id
+              linkedLabels.push(`Beilage „${existing.title}“`)
+            } else {
+              const id = uid('r')
+              created.push({
+                id,
+                title: freeSideTitle,
+                kind: 'side',
+                tags: ['pitch', 'beilage'],
+                ingredients: [],
+                notes: pitch.note.trim()
+                  ? `Aus Pitch zu „${pitch.title.trim()}“: ${pitch.note.trim()}`
+                  : `Aus Pitch zu „${pitch.title.trim()}“`,
+                createdBy: user,
+                createdAt: new Date().toISOString(),
+              })
+              sideRecipeId = id
+              poolSideRecipeId = id
+              addedLabels.push(`Beilage „${freeSideTitle}“`)
+            }
+          }
+
+          const alreadyFullyLinked =
+            Boolean(recipeId || pitch.recipeId) &&
+            (!pitch.sideTitle?.trim() || Boolean(sideRecipeId || pitch.sideRecipeId)) &&
+            Boolean(pitch.poolRecipeId || pitch.recipeId) &&
+            (!pitch.sideTitle?.trim() ||
+              Boolean(pitch.poolSideRecipeId || pitch.sideRecipeId))
+
+          if (
+            created.length === 0 &&
+            addedLabels.length === 0 &&
+            linkedLabels.length === 0 &&
+            !poolRecipeId &&
+            !poolSideRecipeId
+          ) {
+            if (alreadyFullyLinked || pitch.recipeId || pitch.sideRecipeId) {
+              return {
+                ok: true,
+                message: 'Schon mit dem Rezepte-Pool verknüpft.',
+                recipeIds: [pitch.recipeId, pitch.sideRecipeId].filter(
+                  Boolean,
+                ) as string[],
+              }
+            }
+            return {
+              ok: false,
+              message: 'Nichts Neues zum Speichern.',
+              recipeIds: [],
+            }
+          }
+
+          if (
+            created.length === 0 &&
+            linkedLabels.length === 0 &&
+            (pitch.poolRecipeId || pitch.poolSideRecipeId)
+          ) {
+            return {
+              ok: true,
+              message: 'Schon im Rezepte-Pool.',
+              recipeIds: [pitch.poolRecipeId, pitch.poolSideRecipeId].filter(
+                Boolean,
+              ) as string[],
+            }
+          }
+
+          set({
+            recipes:
+              created.length > 0
+                ? [...created, ...get().recipes]
+                : get().recipes,
+            pitches: get().pitches.map((p) =>
+              p.id === pitchId
+                ? {
+                    ...p,
+                    recipeId: recipeId || p.recipeId,
+                    sideRecipeId: sideRecipeId || p.sideRecipeId,
+                    sideTitle: freeSideTitle || p.sideTitle,
+                    poolRecipeId: poolRecipeId || p.poolRecipeId,
+                    poolSideRecipeId: poolSideRecipeId || p.poolSideRecipeId,
+                  }
+                : p,
+            ),
+          })
+
+          const message =
+            addedLabels.length > 0
+              ? `Zum Rezepte-Pool: ${addedLabels.join(', ')}`
+              : `Mit Pool verknüpft: ${linkedLabels.join(', ')}`
+
+          return {
+            ok: true,
+            message,
+            recipeIds: [
+              ...created.map((r) => r.id),
+              ...([poolRecipeId, poolSideRecipeId].filter(Boolean) as string[]),
+            ],
+          }
         },
 
         assignSlot: (day, payload) => {
