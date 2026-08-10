@@ -1223,7 +1223,14 @@ function WeekView({
                   {WEEKDAY_LABELS[slot.day]}
                 </strong>
                 {hasMeal && bringSent ? (
-                  <span className="tag tag-bring">Auf Bring</span>
+                  <span
+                    className="tag tag-ordered"
+                    title="Zutaten schon an Bring gesendet"
+                  >
+                    <Check size={14} strokeWidth={3} aria-hidden />
+                    <ShoppingCart size={14} aria-hidden />
+                    Bestellt
+                  </span>
                 ) : null}
                 {hasMeal ? (
                   <button
@@ -1242,9 +1249,6 @@ function WeekView({
                 <>
                   <h3>{title}</h3>
                   <div className="tags">
-                    {bringSent ? (
-                      <span className="tag tag-bring">Bestellt</span>
-                    ) : null}
                     {recipe?.kind === 'base' ? (
                       <span className="tag green">Basis</span>
                     ) : null}

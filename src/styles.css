@@ -1044,6 +1044,28 @@ p {
   letter-spacing: 0.01em;
 }
 
+.tag-ordered {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: linear-gradient(180deg, #d4f5e4, var(--good-soft));
+  color: #146c43;
+  border-color: rgba(61, 155, 120, 0.45);
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+
+.tag-ordered svg {
+  flex-shrink: 0;
+}
+
+.day-card.bring-sent {
+  border-color: rgba(61, 155, 120, 0.45);
+  background:
+    linear-gradient(160deg, rgba(199, 240, 221, 0.4), transparent 60%),
+    var(--panel);
+}
+
 .bring-sent-banner {
   display: inline-flex;
   align-items: center;
