@@ -96,6 +96,74 @@ function parse_recipe_id(string $input): ?string {
     return $input !== '' ? $input : null;
 }
 
+function format_scalar_amount($value): string {
+    if ($value === null || $value === '') {
+        return '';
+    }
+    if (is_bool($value)) {
+        return '';
+    }
+    if (is_int($value) || is_float($value)) {
+        // Avoid trailing .0 for whole numbers.
+        if (is_float($value) && floor($value) == $value) {
+            return (string) (int) $value;
+        }
+        return rtrim(rtrim(sprintf('%.3F', (float) $value), '0'), '.');
+    }
+    if (is_string($value)) {
+        $trim = trim($value);
+        return strcasecmp($trim, 'Array') === 0 ? '' : $trim;
+    }
+    return '';
+}
+
+/**
+ * Cookidoo quantity is often {"value":100} or {"from":10,"to":15}.
+ */
+function format_quantity($quantity): string {
+    if ($quantity === null || $quantity === '') {
+        return '';
+    }
+    if (is_array($quantity)) {
+        if (isset($quantity['value'])) {
+            return format_scalar_amount($quantity['value']);
+        }
+        $from = format_scalar_amount($quantity['from'] ?? null);
+        $to = format_scalar_amount($quantity['to'] ?? null);
+        if ($from !== '' && $to !== '') {
+            return $from . '–' . $to;
+        }
+        return $from !== '' ? $from : $to;
+    }
+    return format_scalar_amount($quantity);
+}
+
+function format_ingredient_amount(array $ing): ?string {
+    $unit = format_scalar_amount(
+        $ing['unitNotation'] ?? $ing['unit'] ?? $ing['unitText'] ?? ''
+    );
+
+    $qty = '';
+    if (array_key_exists('quantity', $ing)) {
+        $qty = format_quantity($ing['quantity']);
+    } elseif (array_key_exists('amount', $ing)) {
+        $amount = $ing['amount'];
+        if (is_array($amount)) {
+            $qty = format_quantity($amount);
+            if ($unit === '') {
+                $unit = format_scalar_amount(
+                    $amount['unitNotation'] ?? $amount['unit'] ?? ''
+                );
+            }
+        } else {
+            $qty = format_scalar_amount($amount);
+        }
+    }
+
+    $combined = trim($qty . ($unit !== '' ? ' ' . $unit : ''));
+    return $combined !== '' ? $combined : null;
+}
+
 function normalize_ingredients(array $recipe): array {
     $out = [];
     $groups = $recipe['recipeIngredientGroups'] ?? $recipe['ingredientGroups'] ?? [];
@@ -103,26 +171,38 @@ function normalize_ingredients(array $recipe): array {
         $groups = [];
     }
     foreach ($groups as $group) {
-        $ings = $group['recipeIngredients'] ?? $group['ingredients'] ?? [];
+        // Some payloads nest ingredients; others put a single ingredient on the group.
+        $ings = $group['recipeIngredients'] ?? $group['ingredients'] ?? null;
         if (!is_array($ings)) {
-            continue;
+            if (isset($group['ingredientNotation']) || isset($group['name'])) {
+                $ings = [$group];
+            } else {
+                continue;
+            }
         }
         foreach ($ings as $ing) {
-            $name = trim((string) ($ing['name'] ?? $ing['ingredient'] ?? $ing['text'] ?? ''));
-            if ($name === '' && isset($ing['ingredientNotation'])) {
-                $name = trim((string) $ing['ingredientNotation']);
+            if (!is_array($ing)) {
+                if (is_string($ing) && trim($ing) !== '') {
+                    $out[] = ['name' => trim($ing), 'amount' => null];
+                }
+                continue;
             }
-            $amount = '';
-            if (isset($ing['quantity']) || isset($ing['unit'])) {
-                $amount = trim(
-                    trim((string) ($ing['quantity'] ?? '')) . ' ' . trim((string) ($ing['unit'] ?? ''))
-                );
-            } elseif (isset($ing['amount'])) {
-                $amount = trim((string) $ing['amount']);
+            $name = trim((string) ($ing['ingredientNotation'] ?? $ing['name'] ?? $ing['ingredient'] ?? $ing['text'] ?? ''));
+            $prep = trim((string) ($ing['preparation'] ?? ''));
+            if ($name === '' && $prep !== '') {
+                $name = $prep;
+                $prep = '';
             }
-            if ($name !== '') {
-                $out[] = ['name' => $name, 'amount' => $amount !== '' ? $amount : null];
+            if ($name === '') {
+                continue;
             }
+            if ($prep !== '' && stripos($name, $prep) === false) {
+                $name = $name . ' (' . $prep . ')';
+            }
+            $out[] = [
+                'name' => $name,
+                'amount' => format_ingredient_amount($ing),
+            ];
         }
     }
     if (!$out && isset($recipe['ingredients']) && is_array($recipe['ingredients'])) {
@@ -130,11 +210,11 @@ function normalize_ingredients(array $recipe): array {
             if (is_string($ing)) {
                 $out[] = ['name' => $ing, 'amount' => null];
             } elseif (is_array($ing)) {
-                $name = trim((string) ($ing['name'] ?? $ing['text'] ?? ''));
+                $name = trim((string) ($ing['ingredientNotation'] ?? $ing['name'] ?? $ing['text'] ?? ''));
                 if ($name !== '') {
                     $out[] = [
                         'name' => $name,
-                        'amount' => isset($ing['amount']) ? (string) $ing['amount'] : null,
+                        'amount' => format_ingredient_amount($ing),
                     ];
                 }
             }

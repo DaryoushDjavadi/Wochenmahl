@@ -260,22 +260,30 @@ export function weekIdFromMonday(monday: Date): string {
   return `week-${y}-${m}-${day}`
 }
 
-/** Fix known wrong demo Cookidoo links that were already synced/persisted. */
+/** Fix known wrong demo Cookidoo links / broken amount strings that were already synced. */
 export function repairRecipeCookidooLinks(recipes: Recipe[]): Recipe[] {
   return recipes.map((r) => {
+    let next = r
     const wrongId =
       r.cookidooId === 'r59322' ||
       (typeof r.cookidooUrl === 'string' && r.cookidooUrl.includes('/r59322'))
     const looksLikeCurry =
       /kichererbsen/i.test(r.title) && /kokos|curry/i.test(r.title)
     if (wrongId && (looksLikeCurry || r.id === 'r-curry')) {
-      return {
-        ...r,
+      next = {
+        ...next,
         cookidooId: 'r505099',
         cookidooUrl: 'https://cookidoo.de/recipes/recipe/de-DE/r505099',
       }
     }
-    return r
+    const fixedIngredients = next.ingredients.map((ing) => {
+      if (ing.amount !== 'Array' && ing.amount !== 'array') return ing
+      return { ...ing, amount: undefined }
+    })
+    if (fixedIngredients.some((ing, i) => ing !== next.ingredients[i])) {
+      next = { ...next, ingredients: fixedIngredients }
+    }
+    return next
   })
 }
 
