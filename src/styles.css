@@ -389,6 +389,12 @@ p {
   color: #1c1408;
 }
 
+.btn.danger {
+  background: rgba(159, 45, 45, 0.1);
+  color: var(--bad);
+  border-color: rgba(159, 45, 45, 0.28);
+}
+
 .btn.block {
   width: 100%;
 }
@@ -1143,6 +1149,28 @@ p {
 .flash.bad {
   background: #f3d6d6;
   color: #7f1d1d;
+}
+
+.undo-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: #f6e3c2;
+  color: #7a4a0c;
+  font-weight: 600;
+  animation: rise 0.25s ease both;
+}
+
+.undo-banner p {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  line-height: 1.35;
 }
 
 .shopping-list {

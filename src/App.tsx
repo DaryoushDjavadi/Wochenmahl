@@ -1497,6 +1497,8 @@ function RecipesView() {
   const addRecipe = useStore((s) => s.addRecipe)
   const updateRecipe = useStore((s) => s.updateRecipe)
   const duplicateRecipe = useStore((s) => s.duplicateRecipe)
+  const deleteRecipe = useStore((s) => s.deleteRecipe)
+  const restoreRecipe = useStore((s) => s.restoreRecipe)
   const [formOpen, setFormOpen] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [detailId, setDetailId] = useState<string | null>(null)
@@ -1509,6 +1511,83 @@ function RecipesView() {
   const [ingredients, setIngredients] = useState('')
   const [notes, setNotes] = useState('')
   const [cookidooUrl, setCookidooUrl] = useState('')
+  const [undo, setUndo] = useState<{
+    recipe: (typeof recipes)[number]
+    index: number
+    secondsLeft: number
+  } | null>(null)
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const undoTickRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const pendingUndoRef = useRef<{
+    recipe: (typeof recipes)[number]
+    index: number
+  } | null>(null)
+
+  const clearUndoTimers = () => {
+    if (undoTimerRef.current) {
+      clearTimeout(undoTimerRef.current)
+      undoTimerRef.current = null
+    }
+    if (undoTickRef.current) {
+      clearInterval(undoTickRef.current)
+      undoTickRef.current = null
+    }
+  }
+
+  const finalizePendingDelete = () => {
+    pendingUndoRef.current = null
+    clearUndoTimers()
+    setUndo(null)
+  }
+
+  const undoDelete = () => {
+    const pending = pendingUndoRef.current
+    if (!pending) return
+    restoreRecipe(pending.recipe, pending.index)
+    finalizePendingDelete()
+    setFlash(`„${pending.recipe.title}“ wiederhergestellt`)
+  }
+
+  const requestDelete = (recipe: (typeof recipes)[number]) => {
+    // Commit any previous pending delete first.
+    if (pendingUndoRef.current) {
+      pendingUndoRef.current = null
+      clearUndoTimers()
+    }
+    const index = recipes.findIndex((r) => r.id === recipe.id)
+    const removed = deleteRecipe(recipe.id)
+    if (!removed) return
+    if (detailId === recipe.id) setDetailId(null)
+    if (editingId === recipe.id) {
+      setFormOpen(false)
+      setEditingId(null)
+    }
+    pendingUndoRef.current = { recipe: removed, index: index < 0 ? 0 : index }
+    setUndo({
+      recipe: removed,
+      index: index < 0 ? 0 : index,
+      secondsLeft: 5,
+    })
+    clearUndoTimers()
+    undoTickRef.current = setInterval(() => {
+      setUndo((prev) =>
+        prev
+          ? { ...prev, secondsLeft: Math.max(0, prev.secondsLeft - 1) }
+          : prev,
+      )
+    }, 1000)
+    undoTimerRef.current = setTimeout(() => {
+      finalizePendingDelete()
+    }, 5000)
+  }
+
+  useEffect(() => {
+    return () => {
+      // Leaving the view keeps the delete (already applied).
+      clearUndoTimers()
+      pendingUndoRef.current = null
+    }
+  }, [])
 
   const resetForm = () => {
     setEditingId(null)
@@ -1585,7 +1664,7 @@ function RecipesView() {
           <div>
             <h2>Rezepte</h2>
             <p className="lede">
-              Bibliothek — anlegen, anpassen oder duplizieren.
+              Bibliothek — anlegen, anpassen, duplizieren oder löschen.
             </p>
           </div>
         </div>
@@ -1604,6 +1683,16 @@ function RecipesView() {
             </button>
           ) : null}
         </div>
+        {undo ? (
+          <div className="undo-banner" role="status">
+            <p>
+              „{undo.recipe.title}“ gelöscht · noch {undo.secondsLeft}s
+            </p>
+            <button type="button" className="btn sm secondary" onClick={undoDelete}>
+              Rückgängig
+            </button>
+          </div>
+        ) : null}
         {flash ? <div className="flash">{flash}</div> : null}
         {browseFlash ? <div className="flash">{browseFlash}</div> : null}
       </div>
@@ -1685,6 +1774,13 @@ function RecipesView() {
                   }}
                 >
                   Duplizieren
+                </button>
+                <button
+                  type="button"
+                  className="btn sm danger"
+                  onClick={() => requestDelete(r)}
+                >
+                  Löschen
                 </button>
               </div>
             </>

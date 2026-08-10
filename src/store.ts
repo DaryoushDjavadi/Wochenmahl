@@ -43,6 +43,8 @@ interface Store {
     patch: Omit<Recipe, 'id' | 'createdAt' | 'createdBy'>,
   ) => void
   duplicateRecipe: (id: string) => string | null
+  deleteRecipe: (id: string) => Recipe | null
+  restoreRecipe: (recipe: Recipe, index?: number) => void
   addImportedRecipe: (
     recipe: Omit<Recipe, 'id' | 'createdAt' | 'createdBy'>,
   ) => string
@@ -193,6 +195,55 @@ export const useStore = create<Store>()(
           }
           set({ recipes: [next, ...get().recipes] })
           return nextId
+        },
+
+        deleteRecipe: (id) => {
+          const list = get().recipes
+          const index = list.findIndex((r) => r.id === id)
+          if (index < 0) return null
+          const removed = list[index]
+          set({
+            recipes: list.filter((r) => r.id !== id),
+            pitches: get().pitches.filter(
+              (p) => p.recipeId !== id && p.sideRecipeId !== id,
+            ),
+            weeks: get().weeks.map((week) => ({
+              ...week,
+              slots: week.slots.map((slot) => {
+                if (slot.recipeId !== id && slot.sideRecipeId !== id) {
+                  return slot
+                }
+                if (slot.recipeId === id) {
+                  return {
+                    day: slot.day,
+                    recipeId: undefined,
+                    title: undefined,
+                    sideRecipeId: undefined,
+                    sideTitle: undefined,
+                    fromPitchId: undefined,
+                  }
+                }
+                return {
+                  ...slot,
+                  sideRecipeId: undefined,
+                  sideTitle: undefined,
+                }
+              }),
+            })),
+          })
+          return removed
+        },
+
+        restoreRecipe: (recipe, index) => {
+          const list = get().recipes
+          if (list.some((r) => r.id === recipe.id)) return
+          const next = [...list]
+          const at =
+            typeof index === 'number'
+              ? Math.max(0, Math.min(index, next.length))
+              : 0
+          next.splice(at, 0, recipe)
+          set({ recipes: next })
         },
 
         addImportedRecipe: (recipe) => {
