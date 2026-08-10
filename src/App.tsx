@@ -833,7 +833,7 @@ function TopBar({
             onClick={() => setMenuOpen((v) => !v)}
           >
             <Menu size={18} />
-            <span>Menü</span>
+            <span className="file-menu-label">Menü</span>
           </button>
           {menuOpen ? (
             <div className="file-menu-panel" role="menu">
@@ -1004,8 +1004,8 @@ function WeekView({
             <p className="week-toolbar-meta">
               {pitching
                 ? plannedCount === 0
-                  ? 'Noch leer — Tag antippen und Gericht wählen'
-                  : `${plannedCount} von 7 Tagen geplant`
+                  ? 'Noch leer — Tag tippen'
+                  : `${plannedCount} von 7 geplant`
                 : `Festgelegt · ${plannedCount} Tage`}
             </p>
           </div>
