@@ -335,14 +335,14 @@ function cookie_temp_path(): string {
     if (!is_dir($dir)) {
         @mkdir($dir, 0755, true);
     }
-    $path = tempnam(is_dir($dir) && is_writable($dir) ? $dir : sys_get_temp_dir(), 'ckjar_');
-    return $path !== false ? $path : (sys_get_temp_dir() . '/ckjar_' . uniqid('', true));
+    $base = (is_dir($dir) && is_writable($dir)) ? $dir : sys_get_temp_dir();
+    $path = tempnam($base, 'ckjar_');
+    return $path !== false ? $path : ($base . '/ckjar_' . uniqid('', true));
 }
 
 /**
- * HTTP request with dual cookie handling:
- * - Netscape cookie file (curl engine, cross-domain redirects)
- * - Manual Set-Cookie parse as backup (some hosts mishandle COOKIELIST)
+ * Cookie-aware HTTP via curl FOLLOWLOCATION (required on some hosts;
+ * manual redirect loops can yield bogus 401s / drop CSRF cookies).
  *
  * @param list<array{key:string,value:string,domain:string,path:string}> $cookies
  * @return array{ok:bool,status:int,error:?string,json:mixed,raw:string,url:string,headers:list<string>,cookies:list<array{key:string,value:string,domain:string,path:string}>}
@@ -354,141 +354,96 @@ function http_cookied(
     array $headers = [],
     ?string $body = null,
     bool $follow = true,
-    int $maxRedirects = 15,
+    int $maxRedirects = 20,
 ): array {
     $cookieFile = cookie_temp_path();
     write_cookie_file($cookieFile, $cookies);
 
-    $current = $url;
     $methodUse = strtoupper($method);
-    $bodyUse = $body;
-    $allHeaders = [];
+    $setCookieHeaders = [];
+    $ch = curl_init($url);
+    $reqHeaders = array_merge([
+        'User-Agent: ' . BROWSER_UA,
+        'Accept-Language: de-DE,de;q=0.9,en;q=0.8',
+        'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,*/*;q=0.7',
+    ], $headers);
 
-    for ($i = 0; $i <= $maxRedirects; $i++) {
-        $ch = curl_init($current);
-        $cookieHeader = cookie_header_for_url($cookies, $current);
-        $reqHeaders = array_merge([
-            'User-Agent: ' . BROWSER_UA,
-            'Accept-Language: de-DE,de;q=0.9,en;q=0.8',
-            'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,*/*;q=0.7',
-        ], $headers);
-        // Explicit Cookie header + jar: some PHP builds drop cross-domain jar cookies
-        if ($cookieHeader !== '') {
-            $reqHeaders[] = 'Cookie: ' . $cookieHeader;
-        }
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_CUSTOMREQUEST => $methodUse,
-            CURLOPT_HTTPHEADER => $reqHeaders,
-            CURLOPT_TIMEOUT => 45,
-            CURLOPT_FOLLOWLOCATION => false,
-            CURLOPT_SSL_VERIFYPEER => true,
-            CURLOPT_HEADER => true,
-            CURLOPT_ENCODING => '',
-            CURLOPT_COOKIEJAR => $cookieFile,
-            CURLOPT_COOKIEFILE => $cookieFile,
-        ]);
-        if ($bodyUse !== null && ($methodUse === 'POST' || $methodUse === 'PUT')) {
-            curl_setopt($ch, CURLOPT_POSTFIELDS, $bodyUse);
-        }
-        $rawFull = curl_exec($ch);
-        $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $headerSize = (int) curl_getinfo($ch, CURLINFO_HEADER_SIZE);
-        $error = curl_error($ch);
-        $cookielist = curl_getinfo($ch, CURLINFO_COOKIELIST);
-        curl_close($ch);
-
-        if ($rawFull === false) {
-            @unlink($cookieFile);
-            return [
-                'ok' => false,
-                'status' => 0,
-                'error' => $error ?: 'curl failed',
-                'json' => null,
-                'raw' => '',
-                'url' => $current,
-                'headers' => [],
-                'cookies' => $cookies,
-            ];
-        }
-
-        $rawHeaders = substr($rawFull, 0, $headerSize);
-        $rawBody = substr($rawFull, $headerSize);
-        $hdrLines = preg_split("/\r\n|\n|\r/", $rawHeaders) ?: [];
-        $allHeaders = $hdrLines;
-
-        $host = parse_url($current, PHP_URL_HOST) ?: '';
-        $cookies = merge_cookies($cookies, parse_set_cookie_headers($hdrLines, $host));
-        if (is_array($cookielist)) {
-            $cookies = merge_cookies($cookies, cookies_from_cookielist($cookielist));
-        }
-        $cookies = merge_cookies($cookies, cookies_from_cookielist(
-            array_values(array_filter(
-                file($cookieFile, FILE_IGNORE_NEW_LINES) ?: [],
-                static fn($line) => is_string($line)
-            ))
-        ));
-        write_cookie_file($cookieFile, $cookies);
-
-        $location = null;
-        foreach ($hdrLines as $h) {
-            if (preg_match('/^Location:\s*(.+)$/i', $h, $lm)) {
-                $location = trim($lm[1]);
-                break;
+    $opts = [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER => $reqHeaders,
+        CURLOPT_TIMEOUT => 60,
+        CURLOPT_FOLLOWLOCATION => $follow,
+        CURLOPT_MAXREDIRS => $maxRedirects,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_ENCODING => '',
+        CURLOPT_COOKIEJAR => $cookieFile,
+        CURLOPT_COOKIEFILE => $cookieFile,
+        CURLOPT_HEADERFUNCTION => static function ($ch, string $header) use (&$setCookieHeaders): int {
+            if (stripos($header, 'Set-Cookie:') === 0) {
+                $setCookieHeaders[] = trim($header);
             }
-        }
+            return strlen($header);
+        },
+    ];
 
-        if (
-            $follow
-            && $location !== null
-            && $location !== ''
-            && in_array($status, [301, 302, 303, 307, 308], true)
-        ) {
-            if (str_starts_with($location, '/')) {
-                $scheme = parse_url($current, PHP_URL_SCHEME) ?: 'https';
-                $h = parse_url($current, PHP_URL_HOST) ?: '';
-                $location = $scheme . '://' . $h . $location;
-            } elseif (!preg_match('#^https?://#i', $location)) {
-                $basePath = preg_replace('#/[^/]*$#', '/', $current) ?: $current;
-                $location = rtrim($basePath, '/') . '/' . ltrim($location, '/');
-            }
-            // After POST+302/303, browsers switch to GET
-            if ($methodUse === 'POST' && in_array($status, [301, 302, 303], true)) {
-                $methodUse = 'GET';
-                $bodyUse = null;
-                $headers = array_values(array_filter(
-                    $headers,
-                    static fn($h) => !preg_match('/^Content-Type:/i', $h)
-                        && !preg_match('/^Origin:/i', $h)
-                ));
-            }
-            $current = $location;
-            continue;
+    if ($methodUse === 'POST') {
+        $opts[CURLOPT_POST] = true;
+        $opts[CURLOPT_POSTFIELDS] = $body ?? '';
+    } elseif ($methodUse === 'PUT') {
+        $opts[CURLOPT_CUSTOMREQUEST] = 'PUT';
+        $opts[CURLOPT_POSTFIELDS] = $body ?? '';
+    } elseif ($methodUse !== 'GET') {
+        $opts[CURLOPT_CUSTOMREQUEST] = $methodUse;
+        if ($body !== null) {
+            $opts[CURLOPT_POSTFIELDS] = $body;
         }
+    }
 
+    curl_setopt_array($ch, $opts);
+    $rawBody = curl_exec($ch);
+    $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $finalUrl = (string) curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
+    $error = curl_error($ch);
+    $cookielist = curl_getinfo($ch, CURLINFO_COOKIELIST);
+    curl_close($ch);
+
+    if ($rawBody === false) {
         @unlink($cookieFile);
-        $json = json_decode($rawBody, true);
         return [
-            'ok' => $status >= 200 && $status < 300,
-            'status' => $status,
-            'error' => null,
-            'json' => is_array($json) ? $json : null,
-            'raw' => $rawBody,
-            'url' => $current,
-            'headers' => $allHeaders,
+            'ok' => false,
+            'status' => 0,
+            'error' => $error ?: 'curl failed',
+            'json' => null,
+            'raw' => '',
+            'url' => $finalUrl !== '' ? $finalUrl : $url,
+            'headers' => $setCookieHeaders,
             'cookies' => $cookies,
         ];
     }
 
-    @unlink($cookieFile);
+    $host = parse_url($finalUrl !== '' ? $finalUrl : $url, PHP_URL_HOST) ?: '';
+    $cookies = merge_cookies($cookies, parse_set_cookie_headers($setCookieHeaders, $host));
+    if (is_array($cookielist)) {
+        $cookies = merge_cookies($cookies, cookies_from_cookielist($cookielist));
+    }
+    // File may be empty on some hosts until process end — COOKIELIST is authoritative
+    if (is_file($cookieFile)) {
+        $fileLines = file($cookieFile, FILE_IGNORE_NEW_LINES);
+        if (is_array($fileLines)) {
+            $cookies = merge_cookies($cookies, cookies_from_cookielist($fileLines));
+        }
+        @unlink($cookieFile);
+    }
+
+    $json = json_decode($rawBody, true);
     return [
-        'ok' => false,
-        'status' => 0,
-        'error' => 'too many redirects',
-        'json' => null,
-        'raw' => '',
-        'url' => $current,
-        'headers' => [],
+        'ok' => $status >= 200 && $status < 300,
+        'status' => $status,
+        'error' => $error !== '' ? $error : null,
+        'json' => is_array($json) ? $json : null,
+        'raw' => $rawBody,
+        'url' => $finalUrl !== '' ? $finalUrl : $url,
+        'headers' => $setCookieHeaders,
         'cookies' => $cookies,
     ];
 }
@@ -571,104 +526,174 @@ if ($action === 'login') {
         respond(400, ['ok' => false, 'message' => 'Cookidoo E-Mail und Passwort erforderlich.']);
     }
 
-    $cookies = [];
+    // One shared curl cookie jar for the whole OAuth redirect chain (GET + POST).
+    // Re-serializing cookies between hops broke CSRF on some PHP/curl hosts.
+    $cookieFile = cookie_temp_path();
+    file_put_contents($cookieFile, "# Netscape HTTP Cookie File\n\n");
+
     $loginUrl = rtrim($base, '/') . '/profile/' . rawurlencode($lang)
         . '/login?redirectAfterLogin=' . rawurlencode('/foundation/' . $lang . '/for-you');
 
-    $page = http_cookied(
-        'GET',
-        $loginUrl,
-        $cookies,
-        ['Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'],
-    );
-    $cookies = $page['cookies'];
+    $setCookies = [];
+    $ch = curl_init($loginUrl);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_MAXREDIRS => 20,
+        CURLOPT_TIMEOUT => 60,
+        CURLOPT_COOKIEJAR => $cookieFile,
+        CURLOPT_COOKIEFILE => $cookieFile,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_ENCODING => '',
+        CURLOPT_HTTPHEADER => [
+            'User-Agent: ' . BROWSER_UA,
+            'Accept-Language: de-DE,de;q=0.9,en;q=0.8',
+            'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        ],
+        CURLOPT_HEADERFUNCTION => static function ($ch, string $header) use (&$setCookies): int {
+            if (stripos($header, 'Set-Cookie:') === 0) {
+                $setCookies[] = trim($header);
+            }
+            return strlen($header);
+        },
+    ]);
+    $pageBody = curl_exec($ch);
+    $pageStatus = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $pageUrl = (string) curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
+    $pageErr = curl_error($ch);
+    $listAfterGet = curl_getinfo($ch, CURLINFO_COOKIELIST);
+    curl_close($ch);
 
-    if ($page['status'] !== 200 || $page['raw'] === '') {
+    $cookies = [];
+    if (is_array($listAfterGet)) {
+        $cookies = merge_cookies($cookies, cookies_from_cookielist($listAfterGet));
+    }
+    $cookies = merge_cookies(
+        $cookies,
+        parse_set_cookie_headers($setCookies, parse_url($pageUrl, PHP_URL_HOST) ?: 'cookidoo.de')
+    );
+
+    if ($pageBody === false || $pageStatus !== 200 || $pageBody === '') {
+        @unlink($cookieFile);
         respond(401, [
             'ok' => false,
-            'message' => 'Cookidoo-Loginseite nicht erreichbar (Status ' . $page['status'] . ').',
-            'hint' => 'Host/Netzwerk prüfen. Final-URL: ' . ($page['url'] ?? ''),
+            'message' => 'Cookidoo-Loginseite nicht erreichbar (Status ' . $pageStatus . ').',
+            'hint' => $pageErr !== '' ? $pageErr : ('Final-URL: ' . $pageUrl),
             'debug' => [
-                'finalUrl' => $page['url'] ?? null,
+                'finalUrl' => $pageUrl,
                 'cookieKeys' => array_keys(cookie_names($cookies)),
+                'curlError' => $pageErr !== '' ? $pageErr : null,
             ],
         ]);
     }
 
-    $requestId = extract_request_id($page['raw'], $page['url'] ?? '');
+    $requestId = extract_request_id($pageBody, $pageUrl);
     if ($requestId === null) {
+        @unlink($cookieFile);
         respond(401, [
             'ok' => false,
             'message' => 'Cookidoo-Loginformular konnte nicht gelesen werden (requestId fehlt).',
             'hint' => 'Vermutlich Captcha/Bot-Schutz oder geändertes Login-HTML.',
             'debug' => [
-                'finalUrl' => $page['url'] ?? null,
+                'finalUrl' => $pageUrl,
                 'cookieKeys' => array_keys(cookie_names($cookies)),
-                'htmlSnippet' => substr(preg_replace('/\s+/', ' ', $page['raw']), 0, 220),
+                'htmlSnippet' => substr(preg_replace('/\s+/', ' ', $pageBody), 0, 220),
             ],
         ]);
     }
 
-    $post = http_cookied(
-        'POST',
-        CIAM_LOGIN_SRV,
-        $cookies,
-        [
+    $setCookies = [];
+    $ch = curl_init(CIAM_LOGIN_SRV);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => http_build_query([
+            'requestId' => $requestId,
+            'username' => $email,
+            'password' => $password,
+        ]),
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_MAXREDIRS => 20,
+        CURLOPT_TIMEOUT => 60,
+        CURLOPT_COOKIEJAR => $cookieFile,
+        CURLOPT_COOKIEFILE => $cookieFile,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_ENCODING => '',
+        CURLOPT_HTTPHEADER => [
+            'User-Agent: ' . BROWSER_UA,
+            'Accept-Language: de-DE,de;q=0.9,en;q=0.8',
             'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Content-Type: application/x-www-form-urlencoded',
             'Origin: https://eu.login.vorwerk.com',
             'Referer: https://eu.login.vorwerk.com/ciam/login?requestId=' . rawurlencode($requestId)
                 . '&view_type=login&market=' . rawurlencode($market) . '&ui_locales=' . rawurlencode($lang),
         ],
-        http_build_query([
-            'requestId' => $requestId,
-            'username' => $email,
-            'password' => $password,
-        ]),
-        true,
-    );
-    $cookies = $post['cookies'];
-    $names = cookie_names($cookies);
+        CURLOPT_HEADERFUNCTION => static function ($ch, string $header) use (&$setCookies): int {
+            if (stripos($header, 'Set-Cookie:') === 0) {
+                $setCookies[] = trim($header);
+            }
+            return strlen($header);
+        },
+    ]);
+    $postBody = curl_exec($ch);
+    $postStatus = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $postUrl = (string) curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
+    $postErr = curl_error($ch);
+    $listAfterPost = curl_getinfo($ch, CURLINFO_COOKIELIST);
+    curl_close($ch);
 
-    // If still missing auth cookies, try explicit callback URL from body/location
+    if (is_array($listAfterPost)) {
+        $cookies = merge_cookies($cookies, cookies_from_cookielist($listAfterPost));
+    }
+    $cookies = merge_cookies(
+        $cookies,
+        parse_set_cookie_headers($setCookies, parse_url($postUrl, PHP_URL_HOST) ?: 'cookidoo.de')
+    );
+    @unlink($cookieFile);
+
+    $names = cookie_names($cookies);
+    $postRaw = is_string($postBody) ? $postBody : '';
+
     if (!isset($names['_oauth2_proxy']) || !isset($names['v-authenticated'])) {
-        if (preg_match('#https?://[^"\'\s]+/oauth2/callback\?[^"\'\s]+#i', $post['raw'] . ' ' . ($post['url'] ?? ''), $cm)) {
+        if (preg_match('#https?://[^"\'\s]+/oauth2/callback\?[^"\'\s]+#i', $postRaw . ' ' . $postUrl, $cm)) {
             $cb = html_entity_decode($cm[0]);
             $cbRes = http_cookied('GET', $cb, $cookies, [
                 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             ]);
             $cookies = $cbRes['cookies'];
             $names = cookie_names($cookies);
-            $post['url'] = $cbRes['url'];
-            $post['status'] = $cbRes['status'];
+            $postUrl = $cbRes['url'];
+            $postStatus = $cbRes['status'];
+            $postRaw = $cbRes['raw'];
         }
     }
 
     if (!isset($names['_oauth2_proxy']) || !isset($names['v-authenticated'])) {
-        $finalUrl = (string) ($post['url'] ?? '');
+        $finalUrl = $postUrl;
         $badPass = stripos($finalUrl, 'invalid_username_password') !== false
-            || stripos($post['raw'], 'invalid_username_password') !== false
-            || stripos($post['raw'], 'username or password is invalid') !== false;
+            || stripos($postRaw, 'invalid_username_password') !== false
+            || stripos($postRaw, 'username or password is invalid') !== false;
         $looksLikeLoginAgain = $badPass
             || stripos($finalUrl, 'login') !== false
-            || stripos($post['raw'], 'requestId') !== false;
+            || stripos($postRaw, 'requestId') !== false;
         respond(401, [
             'ok' => false,
             'message' => $badPass
                 ? 'Cookidoo: E-Mail oder Passwort ist falsch.'
                 : ($looksLikeLoginAgain
-                    ? 'Cookidoo-Login abgelehnt — E-Mail/Passwort prüfen (oder 2FA/Captcha).'
+                    ? 'Cookidoo-Login abgelehnt — E-Mail/Passwort prüfen.'
                     : 'Cookidoo-Session konnte nicht hergestellt werden.'),
             'hint' => $badPass
                 ? 'Zugangsdaten wie auf cookidoo.de eingeben. Land muss zum Konto passen (meist DE).'
-                : 'Bitte Land=DE prüfen. Bei 2FA/Captcha geht Auto-Login oft nicht — Rezepte dann per Link/ID importieren.',
+                : 'Session-Cookies fehlen nach OAuth-Callback. Bitte Land=DE prüfen und erneut versuchen.',
             'debug' => [
                 'finalUrl' => $finalUrl !== '' ? preg_replace('/password=[^&]*/i', 'password=***', $finalUrl) : null,
-                'status' => $post['status'] ?? null,
+                'status' => $postStatus,
                 'cookieKeys' => array_keys($names),
                 'market' => $market,
                 'base' => $base,
                 'badPassword' => $badPass,
+                'curlError' => $postErr !== '' ? $postErr : null,
             ],
         ]);
     }
@@ -698,7 +723,6 @@ if ($action === 'login') {
         }
     }
 
-    // Keep only cookies useful for later API calls (smaller payload)
     $keep = ['_oauth2_proxy', 'v-authenticated', 'v-is-authenticated'];
     $cookies = array_values(array_filter(
         $cookies,
