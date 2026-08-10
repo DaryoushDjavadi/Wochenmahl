@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  BookPlus,
   CalendarDays,
   CalendarRange,
   Check,
@@ -11,6 +10,7 @@ import {
   Home,
   Lightbulb,
   Lock,
+  LockOpen,
   Menu,
   MessageSquarePlus,
   Pin,
@@ -19,14 +19,17 @@ import {
   Settings,
   ShoppingBasket,
   ShoppingCart,
+  Trash2,
   UtensilsCrossed,
 } from 'lucide-react'
 import {
   USERS,
+  mealDishLabel,
   mealLabel,
   mondayOf,
+  normalizeWeekSlot,
   parseWeekMonday,
-  slotMealLabel,
+  slotHasMeal,
   weekIdFromMonday,
 } from './data/seed'
 import {
@@ -34,7 +37,12 @@ import {
   RECIPE_CATEGORIES,
   kindFromCategory,
   resolveRecipeCategory,
+  tagToneClass,
 } from './data/categories'
+import {
+  AllCategoriesIcon,
+  CategoryIcon,
+} from './data/categoryIcons'
 import {
   fetchBringList,
   listCookidooCollectionRecipes,
@@ -51,7 +59,6 @@ import {
 } from './sync/householdSync'
 import type {
   Ingredient,
-  Pitch,
   Recipe,
   RecipeCategory,
   UserId,
@@ -158,18 +165,23 @@ function RecipeDetailBlock({
         {onBring ? <span className="tag tag-bring">Auf Bring</span> : null}
         {category ? (
           <span className={`tag tag-cat tag-cat-${category}`}>
+            <CategoryIcon category={category} size={14} />
             {CATEGORY_LABEL[category]}
           </span>
         ) : null}
-        {kind === 'base' ? <span className="tag green">Basis</span> : null}
-        {kind === 'side' ? <span className="tag">Beilage</span> : null}
+        {kind === 'base' && category !== 'base' ? (
+          <span className="tag tag-cat tag-cat-base">Basis</span>
+        ) : null}
+        {kind === 'side' && category !== 'side' ? (
+          <span className="tag tag-cat tag-cat-side">Beilage</span>
+        ) : null}
         {recipe?.tags.map((t) => (
-          <span key={t} className="tag">
+          <span key={t} className={`tag ${tagToneClass(t)}`}>
             {t}
           </span>
         ))}
         {recipe?.cookidooUrl ? (
-          <span className="tag green">Cookidoo</span>
+          <span className="tag tag-cookidoo">Cookidoo</span>
         ) : null}
       </div>
       {recipe?.notes ? <p className="muted">{recipe.notes}</p> : null}
@@ -194,21 +206,29 @@ function MealDetailModal({
   day,
   slot,
   recipes,
-  onBring = false,
+  sentMealIds,
   onClose,
   onClear,
+  onRemoveMeal,
 }: {
   day: Weekday
   slot: WeekSlot
   recipes: Recipe[]
-  onBring?: boolean
+  sentMealIds?: Set<string>
   onClose: () => void
   onClear?: () => void
+  onRemoveMeal?: (mealId: string) => void
 }) {
-  const main = recipes.find((r) => r.id === slot.recipeId)
-  const side = recipes.find((r) => r.id === slot.sideRecipeId)
-  const sideTitle = slot.sideTitle || side?.title
-  const headline = slotMealLabel(slot, recipes)
+  const meals = normalizeWeekSlot(slot).meals
+  const headline =
+    meals.length === 0
+      ? 'Gericht'
+      : meals.length === 1
+        ? mealDishLabel(meals[0], recipes)
+        : `${meals.length} Gerichte`
+  const allSent =
+    meals.length > 0 && meals.every((m) => sentMealIds?.has(m.id))
+  const someSent = meals.some((m) => sentMealIds?.has(m.id))
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -224,50 +244,97 @@ function MealDetailModal({
             <p className={`tiny day-title ${WEEKDAY_COLOR_CLASS[day]}`}>
               {WEEKDAY_LABELS[day]}
             </p>
-            <h2>{headline || 'Gericht'}</h2>
+            <h2>{headline}</h2>
           </div>
           <button type="button" className="btn ghost sm" onClick={onClose}>
             Schließen
           </button>
         </div>
 
-        {onBring ? (
+        {allSent ? (
           <div className="bring-sent-banner" role="status">
             <ShoppingCart size={16} aria-hidden />
-            Zutaten dieser Woche sind schon auf der Bring-Liste
+            Zutaten dieses Tags sind auf der Bring-Liste
+          </div>
+        ) : someSent ? (
+          <div className="bring-sent-banner partial" role="status">
+            <ShoppingCart size={16} aria-hidden />
+            Teilweise auf Bring — neue Gerichte noch nachsenden
           </div>
         ) : null}
 
-        <RecipeDetailBlock
-          recipe={main}
-          fallbackTitle={slot.title || headline}
-          role={sideTitle ? 'Haupt / Basis' : undefined}
-          onBring={onBring}
-        />
-
-        {sideTitle ? (
-          <RecipeDetailBlock
-            recipe={side}
-            fallbackTitle={sideTitle}
-            role="Beilage"
-            onBring={onBring}
-          />
-        ) : null}
-
-        {!main && !side && !slot.title && !sideTitle ? (
+        {meals.length === 0 ? (
           <p className="muted">Für diesen Tag liegt noch kein Rezept vor.</p>
-        ) : null}
+        ) : (
+          meals.map((meal) => {
+            const main = recipes.find((r) => r.id === meal.recipeId)
+            const side = recipes.find((r) => r.id === meal.sideRecipeId)
+            const sideTitle = meal.sideTitle || side?.title
+            const label = mealDishLabel(meal, recipes)
+            const mealSent = Boolean(sentMealIds?.has(meal.id))
+            return (
+              <div key={meal.id} className="stack day-meal-block">
+                {meals.length > 1 ? (
+                  <div className="row">
+                    <h3 className="grow">{label}</h3>
+                    {mealSent ? (
+                      <span className="tag tag-bring">Auf Bring</span>
+                    ) : null}
+                    {onRemoveMeal ? (
+                      <button
+                        type="button"
+                        className="btn ghost sm icon-delete"
+                        aria-label={`${label} löschen`}
+                        onClick={() => onRemoveMeal(meal.id)}
+                      >
+                        <Trash2 size={16} aria-hidden />
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+                <RecipeDetailBlock
+                  recipe={main}
+                  fallbackTitle={meal.title || label}
+                  role={sideTitle ? 'Haupt / Basis' : undefined}
+                  onBring={mealSent}
+                />
+                {sideTitle ? (
+                  <RecipeDetailBlock
+                    recipe={side}
+                    fallbackTitle={sideTitle}
+                    role="Beilage"
+                    onBring={mealSent}
+                  />
+                ) : null}
+                {meals.length === 1 && onRemoveMeal ? (
+                  <button
+                    type="button"
+                    className="btn ghost sm icon-delete"
+                    aria-label="Gericht vom Tag löschen"
+                    onClick={() => {
+                      onRemoveMeal(meal.id)
+                      onClose()
+                    }}
+                  >
+                    <Trash2 size={18} aria-hidden />
+                  </button>
+                ) : null}
+              </div>
+            )
+          })
+        )}
 
-        {onClear ? (
+        {onClear && meals.length > 1 ? (
           <button
             type="button"
-            className="btn secondary"
+            className="btn ghost sm icon-delete"
+            aria-label="Alle Gerichte vom Tag löschen"
             onClick={() => {
               onClear()
               onClose()
             }}
           >
-            Gericht vom Tag löschen
+            <Trash2 size={18} aria-hidden />
           </button>
         ) : null}
       </div>
@@ -292,13 +359,6 @@ const JS_DAY_TO_WEEKDAY: Weekday[] = [
   'fr',
   'sa',
 ]
-
-function slotHasMeal(slot?: WeekSlot | null) {
-  if (!slot) return false
-  return Boolean(
-    slot.recipeId || slot.title || slot.sideRecipeId || slot.sideTitle,
-  )
-}
 
 function WeekCalendarModal({
   activeWeekId,
@@ -796,10 +856,18 @@ function CookidooBrowseModal({
 
 function LoginScreen() {
   const login = useStore((s) => s.login)
+  const logoSrc = `${import.meta.env.BASE_URL}logo.png`
   return (
     <div className="app-shell login-shell">
       <div>
         <div className="login-hero">
+          <img
+            className="login-logo"
+            src={logoSrc}
+            alt="Wochenkochen"
+            width={112}
+            height={112}
+          />
           <h1>Wochenkochen</h1>
           <p>
             Am Wochenende pitchen, festnageln, einkaufen — Daryoush &amp; Wendi
@@ -876,18 +944,19 @@ function TopBar({
         ? 'Hilfe'
         : 'Wochenkochen'
   const onHomePage = tab === 'week'
+  const logoSrc = `${import.meta.env.BASE_URL}logo.png`
 
   return (
     <header className="topbar">
       <div className="topbar-left">
         <button
           type="button"
-          className={`home-btn ${onHomePage ? 'active' : ''}`}
+          className={`home-btn logo-home ${onHomePage ? 'active' : ''}`}
           onClick={onHome}
           aria-label="Zur Startseite"
           title="Startseite"
         >
-          <Home size={18} aria-hidden />
+          <img src={logoSrc} alt="Wochenkochen" width={34} height={34} />
         </button>
         <div className="file-menu" ref={menuRef}>
           <button
@@ -1009,9 +1078,9 @@ function WeekView({
   const activeWeekId = useStore((s) => s.activeWeekId)
   const recipes = useStore((s) => s.recipes)
   const allPitches = useStore((s) => s.pitches)
-  const bringEnabled = useStore((s) => s.settings.bring.enabled)
   const assignSlot = useStore((s) => s.assignSlot)
   const clearSlot = useStore((s) => s.clearSlot)
+  const removeMeal = useStore((s) => s.removeMeal)
   const lockWeek = useStore((s) => s.lockWeek)
   const ensureWeekNotEmptyLocked = useStore((s) => s.ensureWeekNotEmptyLocked)
   const reopenWeek = useStore((s) => s.reopenWeek)
@@ -1032,6 +1101,15 @@ function WeekView({
     () => allPitches.filter((p) => p.weekId === activeWeekId),
     [allPitches, activeWeekId],
   )
+  const assignedPitchIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const raw of week?.slots ?? []) {
+      for (const meal of normalizeWeekSlot(raw).meals) {
+        if (meal.fromPitchId) ids.add(meal.fromPitchId)
+      }
+    }
+    return ids
+  }, [week?.slots])
   const sideRecipes = useMemo(
     () => recipes.filter((r) => (r.kind ?? 'meal') === 'side'),
     [recipes],
@@ -1041,20 +1119,35 @@ function WeekView({
     [recipes],
   )
   const plannedCount = useMemo(
-    () =>
-      week?.slots.filter(
-        (s) => s.recipeId || s.title || s.sideRecipeId || s.sideTitle,
-      ).length ?? 0,
+    () => week?.slots.filter((s) => slotHasMeal(s)).length ?? 0,
     [week],
   )
-  const detailSlot = useMemo(
-    () => week?.slots.find((s) => s.day === detailDay) ?? null,
-    [week, detailDay],
+  const mealCount = useMemo(
+    () =>
+      week?.slots.reduce(
+        (n, s) => n + normalizeWeekSlot(s).meals.length,
+        0,
+      ) ?? 0,
+    [week],
+  )
+  const detailSlot = useMemo(() => {
+    const raw = week?.slots.find((s) => s.day === detailDay)
+    return raw ? normalizeWeekSlot(raw) : null
+  }, [week, detailDay])
+  const sentMealIds = useMemo(
+    () => new Set(week?.bringSentMealIds ?? []),
+    [week?.bringSentMealIds],
   )
 
   useEffect(() => {
     ensureWeekNotEmptyLocked()
   }, [week?.id, week?.status, plannedCount, ensureWeekNotEmptyLocked])
+
+  useEffect(() => {
+    if (detailDay && detailSlot && detailSlot.meals.length === 0) {
+      setDetailDay(null)
+    }
+  }, [detailDay, detailSlot])
 
   if (!week) return null
 
@@ -1106,7 +1199,9 @@ function WeekView({
               {pitching
                 ? plannedCount === 0
                   ? 'Tag tippen und Gericht wählen'
-                  : `${plannedCount}/7 geplant — dann einkaufen`
+                  : mealCount > plannedCount
+                    ? `${plannedCount}/7 Tage · ${mealCount} Gerichte`
+                    : `${plannedCount}/7 geplant — dann einkaufen`
                 : bringSent
                   ? `Zutaten an Bring gesendet · ${plannedCount} Tage`
                   : `${plannedCount} Tage fest — Plan öffnen zum Ändern`}
@@ -1154,23 +1249,18 @@ function WeekView({
         <div className="week-toolbar-actions">
           {pitching ? (
             <>
-              {plannedCount === 0 ? (
-                <p className="muted tiny week-lock-hint">
-                  Mindestens ein Gericht wählen — danach kannst du einkaufen.
-                </p>
-              ) : (
-                <button
-                  type="button"
-                  className="btn accent week-action-primary"
-                  onClick={() => {
-                    lockWeek()
-                    onShop()
-                  }}
-                >
-                  <ShoppingBasket size={18} aria-hidden />
-                  Festnageln &amp; einkaufen
-                </button>
-              )}
+              <button
+                type="button"
+                className="btn accent week-action-primary"
+                disabled={plannedCount === 0}
+                onClick={() => {
+                  lockWeek()
+                  onShop()
+                }}
+              >
+                <ShoppingBasket size={18} aria-hidden />
+                Festnageln &amp; einkaufen
+              </button>
               <button
                 type="button"
                 className="btn secondary week-action-secondary"
@@ -1188,14 +1278,14 @@ function WeekView({
                 onClick={onShop}
               >
                 <ShoppingBasket size={18} aria-hidden />
-                {bringEnabled ? 'Zur Einkaufsliste' : 'Zur Einkaufsliste'}
+                Zur Einkaufsliste
               </button>
               <button
                 type="button"
                 className="btn ghost week-action-secondary"
                 onClick={reopenWeek}
               >
-                <Lock size={16} aria-hidden />
+                <LockOpen size={16} aria-hidden />
                 Plan wieder öffnen
               </button>
             </>
@@ -1204,18 +1294,17 @@ function WeekView({
       </div>
 
       <div className="day-grid">
-        {week.slots.map((slot) => {
-          const recipe = recipes.find((r) => r.id === slot.recipeId)
-          const side =
-            slot.sideTitle ||
-            recipes.find((r) => r.id === slot.sideRecipeId)?.title
-          const title = slotMealLabel(slot, recipes)
-          const hasMeal = Boolean(slot.title || recipe || side)
+        {week.slots.map((rawSlot) => {
+          const slot = normalizeWeekSlot(rawSlot)
+          const hasMeal = slotHasMeal(slot)
+          const dayAllSent =
+            hasMeal && slot.meals.every((m) => sentMealIds.has(m.id))
+          const daySomeSent = slot.meals.some((m) => sentMealIds.has(m.id))
           return (
             <div
               key={slot.day}
               className={`day-card ${hasMeal ? 'clickable' : 'empty'}${
-                hasMeal && bringSent ? ' bring-sent' : ''
+                dayAllSent ? ' bring-sent' : ''
               }`}
               role={hasMeal ? 'button' : undefined}
               tabIndex={hasMeal ? 0 : undefined}
@@ -1235,45 +1324,65 @@ function WeekView({
                 <strong className={`grow day-title ${WEEKDAY_COLOR_CLASS[slot.day]}`}>
                   {WEEKDAY_LABELS[slot.day]}
                 </strong>
-                {hasMeal && bringSent ? (
+                {dayAllSent ? (
                   <span
                     className="tag tag-ordered"
                     title="Zutaten schon an Bring gesendet"
                   >
                     <Check size={14} strokeWidth={3} aria-hidden />
                     <ShoppingCart size={14} aria-hidden />
-                    Bestellt
+                    Auf Bring
                   </span>
-                ) : null}
-                {hasMeal && pitching ? (
-                  <button
-                    type="button"
-                    className="btn ghost sm"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      clearSlot(slot.day)
-                    }}
-                  >
-                    Löschen
-                  </button>
+                ) : daySomeSent ? (
+                  <span className="tag tag-ordered" title="Teilweise auf Bring">
+                    <ShoppingCart size={14} aria-hidden />
+                    Teilweise
+                  </span>
                 ) : null}
               </div>
               {hasMeal ? (
-                <>
-                  <h3>{title}</h3>
-                  <div className="tags">
-                    {recipe?.kind === 'base' ? (
-                      <span className="tag green">Basis</span>
-                    ) : null}
-                    {side ? <span className="tag">Beilage</span> : null}
-                    {recipe?.tags?.map((t) => (
-                      <span key={t} className="tag">
-                        {t}
-                      </span>
-                    ))}
-                  </div>
-                </>
-              ) : pitching ? (
+                <ul className="day-meal-list">
+                  {slot.meals.map((meal) => {
+                    const recipe = recipes.find((r) => r.id === meal.recipeId)
+                    const side =
+                      meal.sideTitle ||
+                      recipes.find((r) => r.id === meal.sideRecipeId)?.title
+                    const mealSent = sentMealIds.has(meal.id)
+                    return (
+                      <li key={meal.id} className="day-meal-item">
+                        <div className="row">
+                          <h3 className="grow">{mealDishLabel(meal, recipes)}</h3>
+                          {mealSent ? (
+                            <span className="tag tag-ordered" title="Auf Bring">
+                              <Check size={12} strokeWidth={3} aria-hidden />
+                            </span>
+                          ) : null}
+                          {pitching ? (
+                            <button
+                              type="button"
+                              className="btn ghost sm icon-delete day-meal-remove"
+                              aria-label="Gericht löschen"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                removeMeal(slot.day, meal.id)
+                              }}
+                            >
+                              <Trash2 size={16} aria-hidden />
+                            </button>
+                          ) : null}
+                        </div>
+                        <div className="tags">
+                          {recipe?.kind === 'base' ? (
+                            <span className="tag green">Basis</span>
+                          ) : null}
+                          {side ? <span className="tag">Beilage</span> : null}
+                        </div>
+                      </li>
+                    )
+                  })}
+                </ul>
+              ) : null}
+              {pitching ? (
                 <button
                   type="button"
                   className="btn secondary sm"
@@ -1283,11 +1392,11 @@ function WeekView({
                     setPickingDay(slot.day)
                   }}
                 >
-                  Gericht wählen
+                  {hasMeal ? '+ weiteres Gericht' : 'Gericht wählen'}
                 </button>
-              ) : (
+              ) : !hasMeal ? (
                 <p className="muted tiny">Plan fest — zum Ändern wieder öffnen</p>
-              )}
+              ) : null}
             </div>
           )
         })}
@@ -1298,11 +1407,16 @@ function WeekView({
           day={detailDay}
           slot={detailSlot}
           recipes={recipes}
-          onBring={bringSent}
+          sentMealIds={sentMealIds}
           onClose={() => setDetailDay(null)}
           onClear={
             pitching
               ? () => clearSlot(detailDay)
+              : undefined
+          }
+          onRemoveMeal={
+            pitching
+              ? (mealId) => removeMeal(detailDay, mealId)
               : undefined
           }
         />
@@ -1324,7 +1438,11 @@ function WeekView({
               <h2>
                 {pendingBase
                   ? `Beilage zu ${pendingBase.title}`
-                  : WEEKDAY_LABELS[pickingDay]}
+                  : slotHasMeal(
+                        week.slots.find((s) => s.day === pickingDay),
+                      )
+                    ? `Weiteres Gericht · ${WEEKDAY_LABELS[pickingDay]}`
+                    : WEEKDAY_LABELS[pickingDay]}
               </h2>
               <button
                 type="button"
@@ -1378,25 +1496,29 @@ function WeekView({
                 {pitches.length === 0 ? (
                   <p className="muted">Noch keine Pitches — erst vorschlagen.</p>
                 ) : (
-                  pitches.map((p) => (
-                    <button
-                      key={p.id}
-                      type="button"
-                      className="btn secondary"
-                      onClick={() => {
-                        assignSlot(pickingDay, {
-                          recipeId: p.recipeId,
-                          title: p.title,
-                          sideRecipeId: p.sideRecipeId,
-                          sideTitle: p.sideTitle,
-                          fromPitchId: p.id,
-                        })
-                        closePicker()
-                      }}
-                    >
-                      {mealLabel(p.title, p.sideTitle)}
-                    </button>
-                  ))
+                  pitches.map((p) => {
+                    const alreadyInPlan = assignedPitchIds.has(p.id)
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        className={`btn secondary${alreadyInPlan ? ' pitch-assigned' : ''}`}
+                        onClick={() => {
+                          assignSlot(pickingDay, {
+                            recipeId: p.recipeId,
+                            title: p.title,
+                            sideRecipeId: p.sideRecipeId,
+                            sideTitle: p.sideTitle,
+                            fromPitchId: p.id,
+                          })
+                          closePicker()
+                        }}
+                      >
+                        {mealLabel(p.title, p.sideTitle)}
+                        {alreadyInPlan ? ' · schon im Plan' : ''}
+                      </button>
+                    )
+                  })
                 )}
                 <div className="divider" />
                 <p className="muted tiny">Basis / Gerichte</p>
@@ -1430,25 +1552,6 @@ function WeekView({
   )
 }
 
-function pitchBothYes(p: Pitch) {
-  return p.reactions.darius === 'yes' && p.reactions.wendy === 'yes'
-}
-
-function pitchNeedsPoolSave(p: Pitch) {
-  const freeMain = !p.recipeId && !p.poolRecipeId && Boolean(p.title.trim())
-  const freeSide =
-    Boolean(p.sideTitle?.trim()) && !p.sideRecipeId && !p.poolSideRecipeId
-  return freeMain || freeSide
-}
-
-function pitchSavedToPool(p: Pitch) {
-  return Boolean(
-    p.poolRecipeId ||
-      p.poolSideRecipeId ||
-      (p.recipeId && (!p.sideTitle?.trim() || p.sideRecipeId)),
-  )
-}
-
 function PitchView() {
   const currentUser = useStore((s) => s.currentUser)!
   const recipes = useStore((s) => s.recipes)
@@ -1456,8 +1559,8 @@ function PitchView() {
   const activeWeekId = useStore((s) => s.activeWeekId)
   const weeks = useStore((s) => s.weeks)
   const addPitch = useStore((s) => s.addPitch)
+  const deletePitch = useStore((s) => s.deletePitch)
   const reactToPitch = useStore((s) => s.reactToPitch)
-  const promotePitchToPool = useStore((s) => s.promotePitchToPool)
   const [title, setTitle] = useState('')
   const [note, setNote] = useState('')
   const [recipeId, setRecipeId] = useState('')
@@ -1482,6 +1585,12 @@ function PitchView() {
   const sideRecipes = recipes.filter((r) => (r.kind ?? 'meal') === 'side')
   const mainRecipes = recipes.filter((r) => (r.kind ?? 'meal') !== 'side')
 
+  useEffect(() => {
+    if (!flash) return
+    const t = setTimeout(() => setFlash(null), 4500)
+    return () => clearTimeout(t)
+  }, [flash])
+
   return (
     <div className="stack">
       <div className="panel stack">
@@ -1490,12 +1599,12 @@ function PitchView() {
           <p className="lede">
             {locked
               ? 'Woche ist festgenagelt — zum Weiterpitchen erst wieder öffnen.'
-              : 'Vorschläge pitchen und abstimmen — bei doppeltem Yes könnt ihr freie Pitches in den Rezepte-Pool übernehmen.'}
+              : 'Vorschläge pitchen und abstimmen — doppeltes Yes übernimmt automatisch in den Rezepte-Pool und entfernt den Pitch.'}
           </p>
         </div>
         {locked ? (
           <p className="muted tiny">
-            Abstimmen und neue Pitches sind während „Festgelegt“ gesperrt.
+            Abstimmen und neue Pitches sind während „Festgenagelt“ gesperrt.
           </p>
         ) : null}
         <div className="field">
@@ -1621,15 +1730,8 @@ function PitchView() {
         <div className={`flash ${flash.ok ? '' : 'bad'}`}>{flash.message}</div>
       ) : null}
 
-      {pitches.map((p) => {
-        const bothYes = pitchBothYes(p)
-        const canSave = bothYes && pitchNeedsPoolSave(p)
-        const saved = pitchSavedToPool(p) && !pitchNeedsPoolSave(p)
-        return (
-          <article
-            key={p.id}
-            className={`pitch-card${bothYes ? ' pitch-double-yes' : ''}`}
-          >
+      {pitches.map((p) => (
+          <article key={p.id} className="pitch-card">
             <div className="row">
               <Avatar userId={p.pitchedBy} />
               <div className="grow">
@@ -1640,8 +1742,15 @@ function PitchView() {
                   {p.recipeId || p.poolRecipeId ? ' · Rezept verknüpft' : ''}
                 </p>
               </div>
-              {bothYes ? (
-                <span className="tag tag-bring">Doppel-Yes</span>
+              {!locked ? (
+                <button
+                  type="button"
+                  className="btn ghost sm icon-delete"
+                  aria-label={`Pitch „${mealLabel(p.title, p.sideTitle)}“ löschen`}
+                  onClick={() => deletePitch(p.id)}
+                >
+                  <Trash2 size={16} aria-hidden />
+                </button>
               ) : null}
             </div>
             {p.note ? <p>{p.note}</p> : null}
@@ -1660,7 +1769,18 @@ function PitchView() {
                   className={
                     p.reactions[currentUser] === key ? `active-${key}` : ''
                   }
-                  onClick={() => reactToPitch(p.id, key)}
+                  onClick={() => {
+                    const res = reactToPitch(p.id, key)
+                    if (res.promoted) {
+                      setFlash({
+                        ok: true,
+                        message:
+                          (res.message ??
+                            'Angenommen → Rezepte-Pool') +
+                          ' · im Plan einem Tag zuweisen',
+                      })
+                    }
+                  }}
                 >
                   {label}
                 </button>
@@ -1675,27 +1795,8 @@ function PitchView() {
                 ) : null,
               )}
             </div>
-            {canSave ? (
-              <button
-                type="button"
-                className="btn accent sm pitch-pool-btn"
-                onClick={() => {
-                  const res = promotePitchToPool(p.id)
-                  setFlash({ ok: res.ok, message: res.message })
-                }}
-              >
-                <BookPlus size={16} aria-hidden />
-                Zum Rezepte-Pool
-              </button>
-            ) : null}
-            {saved && bothYes ? (
-              <p className="muted tiny pitch-pool-done">
-                <Check size={14} aria-hidden /> Schon im Rezepte-Pool
-              </p>
-            ) : null}
           </article>
-        )
-      })}
+        ))}
     </div>
   )
 }
@@ -1741,10 +1842,15 @@ function RecipesView() {
   const recipesOnBring = useMemo(() => {
     const week = weeks.find((w) => w.id === activeWeekId)
     const ids = new Set<string>()
-    if (!week?.bringSentAt) return ids
-    for (const slot of week.slots) {
-      if (slot.recipeId) ids.add(slot.recipeId)
-      if (slot.sideRecipeId) ids.add(slot.sideRecipeId)
+    const sentMeals = new Set(week?.bringSentMealIds ?? [])
+    if (!week || sentMeals.size === 0) return ids
+    for (const raw of week.slots) {
+      const slot = normalizeWeekSlot(raw)
+      for (const meal of slot.meals) {
+        if (!sentMeals.has(meal.id)) continue
+        if (meal.recipeId) ids.add(meal.recipeId)
+        if (meal.sideRecipeId) ids.add(meal.sideRecipeId)
+      }
     }
     return ids
   }, [weeks, activeWeekId])
@@ -1937,9 +2043,10 @@ function RecipesView() {
             type="button"
             role="tab"
             aria-selected={categoryFilter === 'all'}
-            className={`chip-filter${categoryFilter === 'all' ? ' active' : ''}`}
+            className={`chip-filter chip-cat-all${categoryFilter === 'all' ? ' active' : ''}`}
             onClick={() => setCategoryFilter('all')}
           >
+            <AllCategoriesIcon size={15} />
             Alle ({recipes.length})
           </button>
           {RECIPE_CATEGORIES.map((c) => {
@@ -1953,9 +2060,10 @@ function RecipesView() {
                 type="button"
                 role="tab"
                 aria-selected={categoryFilter === c.id}
-                className={`chip-filter${categoryFilter === c.id ? ' active' : ''}`}
+                className={`chip-filter chip-cat-${c.id}${categoryFilter === c.id ? ' active' : ''}`}
                 onClick={() => setCategoryFilter(c.id)}
               >
+                <CategoryIcon category={c.id} size={15} />
                 {c.label} ({count})
               </button>
             )
@@ -1984,7 +2092,10 @@ function RecipesView() {
       {recipeGroups.map((group) => (
         <section key={group.id} className="recipe-category-group stack">
           <div className="recipe-category-head">
-            <h3>{group.label}</h3>
+            <h3>
+              <CategoryIcon category={group.id} size={18} />
+              {group.label}
+            </h3>
             <span className="muted tiny">{group.items.length}</span>
           </div>
           {group.items.map((r) => {
@@ -2022,15 +2133,16 @@ function RecipesView() {
                     <span className="tag tag-bring">Auf Bring</span>
                   ) : null}
                   <span className={`tag tag-cat tag-cat-${cat}`}>
+                    <CategoryIcon category={cat} size={14} />
                     {CATEGORY_LABEL[cat]}
                   </span>
                   {r.tags.map((t) => (
-                    <span key={t} className="tag">
+                    <span key={t} className={`tag ${tagToneClass(t)}`}>
                       {t}
                     </span>
                   ))}
                   {r.cookidooUrl ? (
-                    <span className="tag green">Cookidoo</span>
+                    <span className="tag tag-cookidoo">Cookidoo</span>
                   ) : null}
                 </div>
                 {detailId === r.id ? (
@@ -2075,10 +2187,11 @@ function RecipesView() {
                       </button>
                       <button
                         type="button"
-                        className="btn sm danger"
+                        className="btn sm ghost icon-delete"
+                        aria-label={`„${r.title}“ löschen`}
                         onClick={() => requestDelete(r)}
                       >
-                        Löschen
+                        <Trash2 size={16} aria-hidden />
                       </button>
                     </div>
                   </>
@@ -2123,21 +2236,24 @@ function RecipesView() {
             </div>
             <div className="field">
               <label htmlFor="r-category">Kategorie</label>
-              <select
-                id="r-category"
-                value={category}
-                onChange={(e) => {
-                  const next = e.target.value as RecipeCategory
-                  setCategory(next)
-                  setKind(kindFromCategory(next))
-                }}
-              >
-                {RECIPE_CATEGORIES.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.label}
-                  </option>
-                ))}
-              </select>
+              <div className="category-select-row">
+                <CategoryIcon category={category} size={20} />
+                <select
+                  id="r-category"
+                  value={category}
+                  onChange={(e) => {
+                    const next = e.target.value as RecipeCategory
+                    setCategory(next)
+                    setKind(kindFromCategory(next))
+                  }}
+                >
+                  {RECIPE_CATEGORIES.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <p className="muted tiny">
                 {RECIPE_CATEGORIES.find((c) => c.id === category)?.hint}
               </p>
@@ -2226,6 +2342,10 @@ function ShopView({ onPlan }: { onPlan: () => void }) {
   const bringSent = Boolean(week?.bringSentAt)
   const items = shoppingDraft
   const sendableCount = items.filter((i) => i.name.trim()).length
+  const pendingCount = items.filter(
+    (i) => i.name.trim() && !i.bringSent,
+  ).length
+  const alreadySentCount = sendableCount - pendingCount
   const groups = useMemo(() => {
     const map = new Map<string, typeof items>()
     for (const item of items) {
@@ -2245,6 +2365,12 @@ function ShopView({ onPlan }: { onPlan: () => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locked, activeWeekId])
 
+  useEffect(() => {
+    if (!flash) return
+    const t = setTimeout(() => setFlash(null), 4500)
+    return () => clearTimeout(t)
+  }, [flash])
+
   return (
     <div className="stack">
       <div className="panel stack">
@@ -2253,15 +2379,28 @@ function ShopView({ onPlan }: { onPlan: () => void }) {
             <h2>Einkaufsliste</h2>
             <p className="lede">
               Wird beim Festnageln automatisch aus dem Plan gebaut. Mengen
-              anpassen, dann an Bring senden.
+              anpassen — an Bring gehen nur neue Zutaten (schon gesendete bleiben
+              markiert).
             </p>
           </div>
           <span
             className={`status-pill ${
-              bringSent ? 'bring' : locked ? '' : 'warn'
+              bringSent && pendingCount === 0
+                ? 'bring'
+                : locked
+                  ? pendingCount > 0 && alreadySentCount > 0
+                    ? 'warn'
+                    : ''
+                  : 'warn'
             }`}
           >
-            {bringSent ? 'Auf Bring' : locked ? 'Plan final' : 'Noch Pitch'}
+            {bringSent && pendingCount === 0
+              ? 'Auf Bring'
+              : pendingCount > 0 && alreadySentCount > 0
+                ? `${pendingCount} neu`
+                : locked
+                  ? 'Plan final'
+                  : 'Noch Pitch'}
           </span>
         </div>
 
@@ -2315,7 +2454,7 @@ function ShopView({ onPlan }: { onPlan: () => void }) {
                   busy ||
                   !settings.bring.enabled ||
                   !settings.bring.linked ||
-                  sendableCount === 0
+                  pendingCount === 0
                 }
                 onClick={async () => {
                   setBusy(true)
@@ -2325,7 +2464,11 @@ function ShopView({ onPlan }: { onPlan: () => void }) {
                   if (res.ok) setBringListKey((k) => k + 1)
                 }}
               >
-                {busy ? 'Sende…' : 'Jetzt an Bring senden'}
+                {busy
+                  ? 'Sende…'
+                  : alreadySentCount > 0
+                    ? `Neue an Bring (${pendingCount})`
+                    : 'Jetzt an Bring senden'}
               </button>
             </div>
             {settings.bring.enabled && settings.bring.linked ? (
@@ -2375,10 +2518,14 @@ function ShopView({ onPlan }: { onPlan: () => void }) {
         ) : (
           groups.map(([dish, groupItems]) => {
             const day = groupItems.find((i) => i.day)?.day
+            const groupAllSent = groupItems.every(
+              (i) => !i.name.trim() || i.bringSent,
+            )
+            const groupSomeSent = groupItems.some((i) => i.bringSent)
             return (
               <section
                 key={dish}
-                className={`shop-group${bringSent ? ' bring-sent' : ''}`}
+                className={`shop-group${groupAllSent ? ' bring-sent' : ''}`}
               >
                 <div className="shop-group-head">
                   <h3
@@ -2386,14 +2533,16 @@ function ShopView({ onPlan }: { onPlan: () => void }) {
                   >
                     {dish}
                   </h3>
-                  {bringSent ? (
+                  {groupAllSent ? (
                     <span className="tag tag-bring">Auf Bring</span>
+                  ) : groupSomeSent ? (
+                    <span className="tag tag-bring">Teilweise</span>
                   ) : null}
                 </div>
                 {groupItems.map((item) => (
                   <div
                     key={item.id}
-                    className={`shop-row${bringSent ? ' bring-sent' : ''}`}
+                    className={`shop-row${item.bringSent ? ' bring-sent' : ''}`}
                   >
                     <div className="shop-row-fields">
                       <input
@@ -2417,16 +2566,16 @@ function ShopView({ onPlan }: { onPlan: () => void }) {
                         }
                       />
                     </div>
-                    {bringSent ? (
-                      <span className="tag tag-bring shop-row-tag">Bestellt</span>
+                    {item.bringSent ? (
+                      <span className="tag tag-bring shop-row-tag">Auf Bring</span>
                     ) : null}
                     <button
                       type="button"
-                      className="btn ghost sm shop-remove"
-                      aria-label={`${item.name || 'Zutat'} entfernen`}
+                      className="btn ghost sm icon-delete shop-remove"
+                      aria-label={`${item.name || 'Zutat'} löschen`}
                       onClick={() => removeShoppingItem(item.id)}
                     >
-                      ✕
+                      <Trash2 size={16} aria-hidden />
                     </button>
                   </div>
                 ))}
@@ -2941,18 +3090,18 @@ function HelpView({ onOpenSettings }: { onOpenSettings: () => void }) {
         <ol className="help-list">
           <li>
             <strong>Pitch</strong> — Vorschläge mit Notiz und Reaktion (Yes /
-            Maybe / Nope). Basis + Beilage (z.&nbsp;B. Reis + Salat) als eigene
-            Pitches abstimmen.
+            Maybe / Nope). Doppeltes Yes → automatisch in den Rezepte-Pool und
+            Pitch verschwindet. Danach im Plan einem Tag zuweisen.
           </li>
           <li>
-            <strong>Plan</strong> — Gerichte den Wochentagen zuordnen; bei einer
-            Basis danach die Beilage wählen. Tippe auf einen befüllten Tag, um
-            Rezept-Details und Zutaten zu sehen. Erst nach „Woche festnageln“
-            Einkaufsliste laden / an Bring senden.
+            <strong>Plan</strong> — Gerichte den Wochentagen zuordnen (auch
+            mehrere pro Tag); bei einer Basis danach die Beilage wählen. Tippe
+            auf einen befüllten Tag für Details. Mit „Festnageln“ (bzw.
+            „Festnageln &amp; einkaufen“) den Plan finalisieren.
           </li>
           <li>
-            <strong>Rezepte</strong> — Bibliothek als Gericht, Basis oder
-            Beilage pflegen.
+            <strong>Rezepte</strong> — Bibliothek nach Kategorien pflegen
+            (Hauptspeise, Suppe, Salat, Beilage, …).
           </li>
         </ol>
       </div>
@@ -2966,7 +3115,8 @@ function HelpView({ onOpenSettings }: { onOpenSettings: () => void }) {
         <ul className="help-list bullets">
           <li>
             <strong>Bring!</strong> — Wochenplan-Zutaten an die gemeinsame
-            Einkaufsliste senden.
+            Einkaufsliste senden. Nach Änderungen nur noch die neuen Positionen
+            (bereits Gesendetes bleibt markiert).
           </li>
           <li>
             <strong>Cookidoo</strong> — Rezepte per Link/ID aus eurem Konto in
@@ -2990,14 +3140,72 @@ function HelpView({ onOpenSettings }: { onOpenSettings: () => void }) {
   )
 }
 
+function SplashScreen({ onDone }: { onDone: () => void }) {
+  const [leaving, setLeaving] = useState(false)
+  const doneRef = useRef(onDone)
+  doneRef.current = onDone
+  const logoSrc = `${import.meta.env.BASE_URL}logo.png`
+
+  useEffect(() => {
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const hold = reduce ? 400 : 1200
+    const fade = reduce ? 0 : 380
+    const leaveTimer = window.setTimeout(() => setLeaving(true), hold)
+    const doneTimer = window.setTimeout(() => doneRef.current(), hold + fade)
+    return () => {
+      window.clearTimeout(leaveTimer)
+      window.clearTimeout(doneTimer)
+    }
+  }, [])
+
+  return (
+    <div
+      className={`splash${leaving ? ' splash-leave' : ''}`}
+      role="status"
+      aria-label="Wochenkochen startet"
+    >
+      <img
+        className="splash-logo"
+        src={logoSrc}
+        alt="Wochenkochen"
+        width={148}
+        height={148}
+      />
+      <p className="splash-brand">Wochenkochen</p>
+    </div>
+  )
+}
+
 export default function App() {
   const currentUser = useStore((s) => s.currentUser)
   const bringEnabled = useStore((s) => s.settings.bring.enabled)
   const [tab, setTab] = useState<Tab>('week')
+  const [showSplash, setShowSplash] = useState(() => {
+    try {
+      return sessionStorage.getItem('wochenkochen-splash') !== '1'
+    } catch {
+      return true
+    }
+  })
 
   useEffect(() => {
     if (!bringEnabled && tab === 'shop') setTab('week')
   }, [bringEnabled, tab])
+
+  if (showSplash) {
+    return (
+      <SplashScreen
+        onDone={() => {
+          try {
+            sessionStorage.setItem('wochenkochen-splash', '1')
+          } catch {
+            /* ignore */
+          }
+          setShowSplash(false)
+        }}
+      />
+    )
+  }
 
   if (!currentUser) return <LoginScreen />
 

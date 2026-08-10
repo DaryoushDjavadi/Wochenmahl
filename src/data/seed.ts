@@ -1,4 +1,12 @@
-import type { AppSettings, Recipe, User, WeekPlan, WeekSlot } from '../types'
+import type {
+  AppSettings,
+  Recipe,
+  ShoppingItem,
+  User,
+  WeekMeal,
+  WeekPlan,
+  WeekSlot,
+} from '../types'
 import { repairRecipeCategories } from './categories'
 
 export const USERS: Record<'darius' | 'wendy', User> = {
@@ -210,6 +218,17 @@ export const SEED_RECIPES: Recipe[] = repairRecipeCategories([
   },
 ])
 
+export function shoppingItemKey(
+  item: Pick<ShoppingItem, 'name' | 'amount' | 'dish' | 'day'>,
+): string {
+  return [
+    item.day ?? '',
+    (item.dish ?? '').trim().toLowerCase(),
+    (item.name ?? '').trim().toLowerCase(),
+    (item.amount ?? '').trim().toLowerCase(),
+  ].join('|')
+}
+
 export function mealLabel(
   main?: string | null,
   side?: string | null,
@@ -224,19 +243,92 @@ export function mealLabel(
   return a || b || 'Gericht'
 }
 
-/** Resolve display title for a week slot without double-appending sides. */
-export function slotMealLabel(
-  slot: Pick<WeekSlot, 'recipeId' | 'title' | 'sideRecipeId' | 'sideTitle'>,
+/** Resolve display title for a single dish (main + optional side). */
+export function mealDishLabel(
+  meal: Pick<WeekMeal, 'recipeId' | 'title' | 'sideRecipeId' | 'sideTitle'>,
   recipes: Recipe[],
 ): string {
-  const recipe = recipes.find((r) => r.id === slot.recipeId)
-  const sideRecipe = recipes.find((r) => r.id === slot.sideRecipeId)
-  const side = (slot.sideTitle || sideRecipe?.title || '').trim()
-  let main = (recipe?.title || slot.title || '').trim()
+  const recipe = recipes.find((r) => r.id === meal.recipeId)
+  const sideRecipe = recipes.find((r) => r.id === meal.sideRecipeId)
+  const side = (meal.sideTitle || sideRecipe?.title || '').trim()
+  let main = (recipe?.title || meal.title || '').trim()
   if (side && main.endsWith(` + ${side}`)) {
     main = main.slice(0, -(side.length + 3)).trim()
   }
   return mealLabel(main || recipe?.title, side)
+}
+
+/** @deprecated alias — prefer mealDishLabel */
+export function slotMealLabel(
+  meal: Pick<WeekMeal, 'recipeId' | 'title' | 'sideRecipeId' | 'sideTitle'>,
+  recipes: Recipe[],
+): string {
+  return mealDishLabel(meal, recipes)
+}
+
+export function slotHasMeal(slot?: WeekSlot | null | unknown): boolean {
+  if (!slot) return false
+  return normalizeWeekSlot(slot).meals.length > 0
+}
+
+export function slotMealsSummary(slot: WeekSlot, recipes: Recipe[]): string {
+  if (!slot.meals.length) return ''
+  return slot.meals.map((m) => mealDishLabel(m, recipes)).join(' · ')
+}
+
+export function normalizeWeekSlot(raw: unknown): WeekSlot {
+  const s = (raw ?? {}) as Partial<WeekSlot> & {
+    day?: WeekSlot['day']
+    recipeId?: string
+    title?: string
+    sideRecipeId?: string
+    sideTitle?: string
+    fromPitchId?: string
+    meals?: WeekMeal[]
+  }
+  const day = s.day!
+  if (Array.isArray(s.meals)) {
+    return {
+      day,
+      meals: s.meals
+        .filter(Boolean)
+        .map((m, i) => ({
+          id: m.id || `m-${day}-${i}`,
+          recipeId: m.recipeId,
+          title: m.title,
+          sideRecipeId: m.sideRecipeId,
+          sideTitle: m.sideTitle,
+          fromPitchId: m.fromPitchId,
+        })),
+    }
+  }
+  if (s.recipeId || s.title || s.sideRecipeId || s.sideTitle) {
+    return {
+      day,
+      meals: [
+        {
+          id: s.fromPitchId ? `m-${s.fromPitchId}` : `m-${day}-legacy`,
+          recipeId: s.recipeId,
+          title: s.title,
+          sideRecipeId: s.sideRecipeId,
+          sideTitle: s.sideTitle,
+          fromPitchId: s.fromPitchId,
+        },
+      ],
+    }
+  }
+  return { day, meals: [] }
+}
+
+export function normalizeWeekPlan(week: WeekPlan): WeekPlan {
+  return {
+    ...week,
+    slots: (week.slots ?? []).map((slot) => normalizeWeekSlot(slot)),
+  }
+}
+
+export function normalizeWeeks(weeks: WeekPlan[]): WeekPlan[] {
+  return weeks.map((w) => normalizeWeekPlan(w))
 }
 
 function startOfDay(d: Date): Date {
@@ -309,7 +401,7 @@ export function createWeekForMonday(mondayInput: Date): WeekPlan {
     id: weekIdFromMonday(monday),
     label: weekLabelFromMonday(monday),
     status: 'pitching',
-    slots: WEEKDAYS.map((d) => ({ day: d.id })),
+    slots: WEEKDAYS.map((d) => ({ day: d.id, meals: [] })),
     createdAt: new Date().toISOString(),
   }
 }

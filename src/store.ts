@@ -13,7 +13,11 @@ import {
   createFreshWeek,
   createWeekForMonday,
   mondayOf,
+  normalizeWeeks,
+  normalizeWeekSlot,
   repairRecipeCookidooLinks,
+  shoppingItemKey,
+  slotHasMeal,
   weekIdFromMonday,
 } from './data/seed'
 import {
@@ -29,6 +33,7 @@ import type {
   RecipeCategory,
   ShoppingItem,
   UserId,
+  WeekMeal,
   WeekPlan,
   Weekday,
 } from './types'
@@ -67,7 +72,11 @@ interface Store {
     sideRecipeId?: string
     sideTitle?: string
   }) => void
-  reactToPitch: (pitchId: string, reaction: 'yes' | 'maybe' | 'no') => void
+  deletePitch: (pitchId: string) => void
+  reactToPitch: (
+    pitchId: string,
+    reaction: 'yes' | 'maybe' | 'no',
+  ) => { promoted: boolean; message?: string }
   promotePitchToPool: (
     pitchId: string,
   ) => { ok: boolean; message: string; recipeIds: string[] }
@@ -81,6 +90,7 @@ interface Store {
       fromPitchId?: string
     },
   ) => void
+  removeMeal: (day: Weekday, mealId: string) => void
   clearSlot: (day: Weekday) => void
   lockWeek: () => void
   ensureWeekNotEmptyLocked: () => void
@@ -226,23 +236,22 @@ export const useStore = create<Store>()(
             weeks: get().weeks.map((week) => ({
               ...week,
               slots: week.slots.map((slot) => {
-                if (slot.recipeId !== id && slot.sideRecipeId !== id) {
-                  return slot
-                }
-                if (slot.recipeId === id) {
-                  return {
-                    day: slot.day,
-                    recipeId: undefined,
-                    title: undefined,
-                    sideRecipeId: undefined,
-                    sideTitle: undefined,
-                    fromPitchId: undefined,
-                  }
-                }
+                const normalized = normalizeWeekSlot(slot)
                 return {
-                  ...slot,
-                  sideRecipeId: undefined,
-                  sideTitle: undefined,
+                  day: normalized.day,
+                  meals: normalized.meals
+                    .map((meal) => {
+                      if (meal.recipeId === id) return null
+                      if (meal.sideRecipeId === id) {
+                        return {
+                          ...meal,
+                          sideRecipeId: undefined,
+                          sideTitle: undefined,
+                        }
+                      }
+                      return meal
+                    })
+                    .filter((m): m is WeekMeal => Boolean(m)),
                 }
               }),
             })),
@@ -343,17 +352,38 @@ export const useStore = create<Store>()(
           set({ pitches: [pitch, ...get().pitches] })
         },
 
+        deletePitch: (pitchId) => {
+          const week = activeWeek(get)
+          if (!week || week.status === 'locked') return
+          set({
+            pitches: get().pitches.filter((p) => p.id !== pitchId),
+          })
+        },
+
         reactToPitch: (pitchId, reaction) => {
           const user = get().currentUser
           const week = activeWeek(get)
-          if (!user || !week || week.status === 'locked') return
+          if (!user || !week || week.status === 'locked') {
+            return { promoted: false }
+          }
+          const pitch = get().pitches.find((p) => p.id === pitchId)
+          if (!pitch) return { promoted: false }
+
+          const reactions = { ...pitch.reactions, [user]: reaction }
           set({
             pitches: get().pitches.map((p) =>
-              p.id === pitchId
-                ? { ...p, reactions: { ...p.reactions, [user]: reaction } }
-                : p,
+              p.id === pitchId ? { ...p, reactions } : p,
             ),
           })
+
+          if (reactions.darius === 'yes' && reactions.wendy === 'yes') {
+            const res = get().promotePitchToPool(pitchId)
+            return {
+              promoted: res.ok,
+              message: res.message,
+            }
+          }
+          return { promoted: false }
         },
 
         promotePitchToPool: (pitchId) => {
@@ -379,13 +409,9 @@ export const useStore = create<Store>()(
           const created: Recipe[] = []
           let recipeId = pitch.recipeId
           let sideRecipeId = pitch.sideRecipeId
-          let poolRecipeId = pitch.poolRecipeId
-          let poolSideRecipeId = pitch.poolSideRecipeId
           const addedLabels: string[] = []
-          const linkedLabels: string[] = []
 
-          const freeMain =
-            !recipeId && !poolRecipeId && Boolean(pitch.title.trim())
+          const freeMain = !recipeId && Boolean(pitch.title.trim())
           if (freeMain) {
             const title = pitch.title.trim()
             const existing = get().recipes.find(
@@ -393,8 +419,7 @@ export const useStore = create<Store>()(
             )
             if (existing) {
               recipeId = existing.id
-              poolRecipeId = existing.id
-              linkedLabels.push(`„${existing.title}“`)
+              addedLabels.push(`„${existing.title}“`)
             } else {
               const id = uid('r')
               created.push({
@@ -409,14 +434,15 @@ export const useStore = create<Store>()(
                 createdAt: new Date().toISOString(),
               })
               recipeId = id
-              poolRecipeId = id
               addedLabels.push(`„${title}“`)
             }
+          } else if (recipeId) {
+            const existing = get().recipes.find((r) => r.id === recipeId)
+            if (existing) addedLabels.push(`„${existing.title}“`)
           }
 
           const freeSideTitle = pitch.sideTitle?.trim()
-          const freeSide =
-            Boolean(freeSideTitle) && !sideRecipeId && !poolSideRecipeId
+          const freeSide = Boolean(freeSideTitle) && !sideRecipeId
           if (freeSide && freeSideTitle) {
             const existing = get().recipes.find(
               (r) =>
@@ -424,8 +450,7 @@ export const useStore = create<Store>()(
             )
             if (existing) {
               sideRecipeId = existing.id
-              poolSideRecipeId = existing.id
-              linkedLabels.push(`Beilage „${existing.title}“`)
+              addedLabels.push(`Beilage „${existing.title}“`)
             } else {
               const id = uid('r')
               created.push({
@@ -442,85 +467,32 @@ export const useStore = create<Store>()(
                 createdAt: new Date().toISOString(),
               })
               sideRecipeId = id
-              poolSideRecipeId = id
               addedLabels.push(`Beilage „${freeSideTitle}“`)
             }
+          } else if (sideRecipeId) {
+            const existing = get().recipes.find((r) => r.id === sideRecipeId)
+            if (existing) addedLabels.push(`Beilage „${existing.title}“`)
           }
 
-          const alreadyFullyLinked =
-            Boolean(recipeId || pitch.recipeId) &&
-            (!pitch.sideTitle?.trim() || Boolean(sideRecipeId || pitch.sideRecipeId)) &&
-            Boolean(pitch.poolRecipeId || pitch.recipeId) &&
-            (!pitch.sideTitle?.trim() ||
-              Boolean(pitch.poolSideRecipeId || pitch.sideRecipeId))
-
-          if (
-            created.length === 0 &&
-            addedLabels.length === 0 &&
-            linkedLabels.length === 0 &&
-            !poolRecipeId &&
-            !poolSideRecipeId
-          ) {
-            if (alreadyFullyLinked || pitch.recipeId || pitch.sideRecipeId) {
-              return {
-                ok: true,
-                message: 'Schon mit dem Rezepte-Pool verknüpft.',
-                recipeIds: [pitch.recipeId, pitch.sideRecipeId].filter(
-                  Boolean,
-                ) as string[],
-              }
-            }
-            return {
-              ok: false,
-              message: 'Nichts Neues zum Speichern.',
-              recipeIds: [],
-            }
-          }
-
-          if (
-            created.length === 0 &&
-            linkedLabels.length === 0 &&
-            (pitch.poolRecipeId || pitch.poolSideRecipeId)
-          ) {
-            return {
-              ok: true,
-              message: 'Schon im Rezepte-Pool.',
-              recipeIds: [pitch.poolRecipeId, pitch.poolSideRecipeId].filter(
-                Boolean,
-              ) as string[],
-            }
-          }
+          const label =
+            addedLabels.length > 0
+              ? addedLabels.join(', ')
+              : [pitch.title, pitch.sideTitle].filter(Boolean).join(' + ')
 
           set({
             recipes:
               created.length > 0
                 ? [...created, ...get().recipes]
                 : get().recipes,
-            pitches: get().pitches.map((p) =>
-              p.id === pitchId
-                ? {
-                    ...p,
-                    recipeId: recipeId || p.recipeId,
-                    sideRecipeId: sideRecipeId || p.sideRecipeId,
-                    sideTitle: freeSideTitle || p.sideTitle,
-                    poolRecipeId: poolRecipeId || p.poolRecipeId,
-                    poolSideRecipeId: poolSideRecipeId || p.poolSideRecipeId,
-                  }
-                : p,
-            ),
+            pitches: get().pitches.filter((p) => p.id !== pitchId),
           })
-
-          const message =
-            addedLabels.length > 0
-              ? `Zum Rezepte-Pool: ${addedLabels.join(', ')}`
-              : `Mit Pool verknüpft: ${linkedLabels.join(', ')}`
 
           return {
             ok: true,
-            message,
+            message: `Angenommen → Rezepte-Pool: ${label}`,
             recipeIds: [
               ...created.map((r) => r.id),
-              ...([poolRecipeId, poolSideRecipeId].filter(Boolean) as string[]),
+              ...([recipeId, sideRecipeId].filter(Boolean) as string[]),
             ],
           }
         },
@@ -541,24 +513,48 @@ export const useStore = create<Store>()(
             mainFromRecipe || payload.title || '',
             sideTitle,
           )
+          const meal: WeekMeal = {
+            id: uid('m'),
+            recipeId: payload.recipeId,
+            title: mainTitle || undefined,
+            sideRecipeId: payload.sideRecipeId,
+            sideTitle,
+            fromPitchId: payload.fromPitchId,
+          }
           set({
             weeks: get().weeks.map((w) => {
               if (w.id !== get().activeWeekId) return w
               return {
                 ...w,
                 bringSentAt: undefined,
-                slots: w.slots.map((s) =>
-                  s.day === day
-                    ? {
-                        day,
-                        recipeId: payload.recipeId,
-                        title: mainTitle || undefined,
-                        sideRecipeId: payload.sideRecipeId,
-                        sideTitle,
-                        fromPitchId: payload.fromPitchId,
-                      }
-                    : s,
-                ),
+                slots: w.slots.map((s) => {
+                  const slot = normalizeWeekSlot(s)
+                  if (slot.day !== day) return slot
+                  return { day, meals: [...slot.meals, meal] }
+                }),
+              }
+            }),
+            shoppingDraft: get().shoppingDraft,
+          })
+        },
+
+        removeMeal: (day, mealId) => {
+          const week = activeWeek(get)
+          if (!week || week.status === 'locked') return
+          set({
+            weeks: get().weeks.map((w) => {
+              if (w.id !== get().activeWeekId) return w
+              return {
+                ...w,
+                bringSentAt: undefined,
+                slots: w.slots.map((s) => {
+                  const slot = normalizeWeekSlot(s)
+                  if (slot.day !== day) return slot
+                  return {
+                    day,
+                    meals: slot.meals.filter((m) => m.id !== mealId),
+                  }
+                }),
               }
             }),
             shoppingDraft: get().shoppingDraft,
@@ -568,16 +564,15 @@ export const useStore = create<Store>()(
         clearSlot: (day) => {
           const week = activeWeek(get)
           if (!week || week.status === 'locked') return
-          const nextSlots = week.slots.map((s) =>
-            s.day === day ? { day } : s,
-          )
           set({
             weeks: get().weeks.map((w) => {
               if (w.id !== get().activeWeekId) return w
               return {
                 ...w,
                 bringSentAt: undefined,
-                slots: nextSlots,
+                slots: w.slots.map((s) =>
+                  s.day === day ? { day, meals: [] } : normalizeWeekSlot(s),
+                ),
               }
             }),
             shoppingDraft: get().shoppingDraft,
@@ -587,14 +582,17 @@ export const useStore = create<Store>()(
         lockWeek: () => {
           const week = activeWeek(get)
           if (!week) return
-          const hasMeal = week.slots.some(
-            (s) => s.recipeId || s.title || s.sideRecipeId || s.sideTitle,
-          )
+          const hasMeal = week.slots.some((s) => slotHasMeal(normalizeWeekSlot(s)))
           if (!hasMeal) return
           set({
             weeks: get().weeks.map((w) =>
               w.id === get().activeWeekId
-                ? { ...w, status: 'locked', bringSentAt: undefined }
+                ? {
+                    ...w,
+                    status: 'locked',
+                    // Keep prior Bring history so only new lines are pushed next.
+                    bringSentAt: undefined,
+                  }
                 : w,
             ),
           })
@@ -606,14 +604,18 @@ export const useStore = create<Store>()(
         ensureWeekNotEmptyLocked: () => {
           const week = activeWeek(get)
           if (!week || week.status !== 'locked') return
-          const hasMeal = week.slots.some(
-            (s) => s.recipeId || s.title || s.sideRecipeId || s.sideTitle,
-          )
+          const hasMeal = week.slots.some((s) => slotHasMeal(normalizeWeekSlot(s)))
           if (hasMeal) return
           set({
             weeks: get().weeks.map((w) =>
               w.id === get().activeWeekId
-                ? { ...w, status: 'pitching', bringSentAt: undefined }
+                ? {
+                    ...w,
+                    status: 'pitching',
+                    bringSentAt: undefined,
+                    bringSentKeys: undefined,
+                    bringSentMealIds: undefined,
+                  }
                 : w,
             ),
             shoppingDraft: [],
@@ -624,7 +626,12 @@ export const useStore = create<Store>()(
           set({
             weeks: get().weeks.map((w) =>
               w.id === get().activeWeekId
-                ? { ...w, status: 'pitching', bringSentAt: undefined }
+                ? {
+                    ...w,
+                    status: 'pitching',
+                    bringSentAt: undefined,
+                    // Keep bringSentKeys / bringSentMealIds for delta pushes.
+                  }
                 : w,
             ),
             shoppingDraft: [],
@@ -656,53 +663,65 @@ export const useStore = create<Store>()(
             return []
           }
           const { recipes } = get()
+          const legacyFullySent =
+            Boolean(week.bringSentAt) &&
+            !(week.bringSentKeys && week.bringSentKeys.length > 0)
+          const sentKeys = new Set(week.bringSentKeys ?? [])
           const dayLabel = (day: Weekday) =>
             WEEKDAYS.find((d) => d.id === day)?.label ?? day
           const items: ShoppingItem[] = []
-          for (const slot of week.slots) {
-            if (slot.recipeId) {
-              const recipe = recipes.find((r) => r.id === slot.recipeId)
-              if (recipe) {
-                const dish = `${recipe.title} (${dayLabel(slot.day)})`
-                for (const ing of recipe.ingredients) {
-                  items.push({
-                    id: uid('shop'),
-                    name: ing.name,
-                    amount: ing.amount,
-                    dish,
-                    day: slot.day,
-                  })
-                }
-              }
-            } else if (slot.title?.trim()) {
-              items.push({
-                id: uid('shop'),
-                name: slot.title.trim(),
-                dish: `${slot.title.trim()} (${dayLabel(slot.day)})`,
-                day: slot.day,
-              })
+          const pushItem = (item: Omit<ShoppingItem, 'id' | 'bringSent'>) => {
+            const row: ShoppingItem = {
+              id: uid('shop'),
+              ...item,
             }
-            if (slot.sideRecipeId) {
-              const side = recipes.find((r) => r.id === slot.sideRecipeId)
-              if (side) {
-                const dish = `${side.title} (${dayLabel(slot.day)})`
-                for (const ing of side.ingredients) {
-                  items.push({
-                    id: uid('shop'),
-                    name: ing.name,
-                    amount: ing.amount,
-                    dish,
-                    day: slot.day,
-                  })
+            row.bringSent =
+              legacyFullySent || sentKeys.has(shoppingItemKey(row))
+            items.push(row)
+          }
+          for (const raw of week.slots) {
+            const slot = normalizeWeekSlot(raw)
+            for (const meal of slot.meals) {
+              if (meal.recipeId) {
+                const recipe = recipes.find((r) => r.id === meal.recipeId)
+                if (recipe) {
+                  const dish = `${recipe.title} (${dayLabel(slot.day)})`
+                  for (const ing of recipe.ingredients) {
+                    pushItem({
+                      name: ing.name,
+                      amount: ing.amount,
+                      dish,
+                      day: slot.day,
+                    })
+                  }
                 }
+              } else if (meal.title?.trim()) {
+                pushItem({
+                  name: meal.title.trim(),
+                  dish: `${meal.title.trim()} (${dayLabel(slot.day)})`,
+                  day: slot.day,
+                })
               }
-            } else if (slot.sideTitle?.trim()) {
-              items.push({
-                id: uid('shop'),
-                name: slot.sideTitle.trim(),
-                dish: `${slot.sideTitle.trim()} (${dayLabel(slot.day)})`,
-                day: slot.day,
-              })
+              if (meal.sideRecipeId) {
+                const side = recipes.find((r) => r.id === meal.sideRecipeId)
+                if (side) {
+                  const dish = `${side.title} (${dayLabel(slot.day)})`
+                  for (const ing of side.ingredients) {
+                    pushItem({
+                      name: ing.name,
+                      amount: ing.amount,
+                      dish,
+                      day: slot.day,
+                    })
+                  }
+                }
+              } else if (meal.sideTitle?.trim()) {
+                pushItem({
+                  name: meal.sideTitle.trim(),
+                  dish: `${meal.sideTitle.trim()} (${dayLabel(slot.day)})`,
+                  day: slot.day,
+                })
+              }
             }
           }
           items.sort((a, b) => {
@@ -712,6 +731,30 @@ export const useStore = create<Store>()(
             if (dishCmp) return dishCmp
             return a.name.localeCompare(b.name, 'de')
           })
+
+          if (legacyFullySent && items.length > 0) {
+            const keys = [...new Set(items.map((i) => shoppingItemKey(i)))]
+            const mealIds: string[] = []
+            for (const raw of week.slots) {
+              for (const meal of normalizeWeekSlot(raw).meals) {
+                mealIds.push(meal.id)
+              }
+            }
+            set({
+              shoppingDraft: items,
+              weeks: get().weeks.map((w) =>
+                w.id === week.id
+                  ? {
+                      ...w,
+                      bringSentKeys: keys,
+                      bringSentMealIds: [...new Set(mealIds)],
+                    }
+                  : w,
+              ),
+            })
+            return items
+          }
+
           set({ shoppingDraft: items })
           return items
         },
@@ -720,9 +763,14 @@ export const useStore = create<Store>()(
 
         updateShoppingItem: (id, patch) => {
           set({
-            shoppingDraft: get().shoppingDraft.map((item) =>
-              item.id === id ? { ...item, ...patch, id: item.id } : item,
-            ),
+            shoppingDraft: get().shoppingDraft.map((item) => {
+              if (item.id !== id) return item
+              const next = { ...item, ...patch, id: item.id }
+              const week = activeWeek(get)
+              const sentKeys = new Set(week?.bringSentKeys ?? [])
+              next.bringSent = sentKeys.has(shoppingItemKey(next))
+              return next
+            }),
           })
         },
 
@@ -741,6 +789,7 @@ export const useStore = create<Store>()(
                 name: '',
                 amount: '',
                 dish: 'Extra',
+                bringSent: false,
               },
             ],
           })
@@ -826,9 +875,13 @@ export const useStore = create<Store>()(
             }
           }
           const { settings, shoppingDraft, buildShoppingList } = get()
-          const items = (
+          const allItems = (
             shoppingDraft.length > 0 ? shoppingDraft : buildShoppingList()
           ).filter((i) => i.name.trim())
+          const sentKeys = new Set(week.bringSentKeys ?? [])
+          const pending = allItems.filter(
+            (i) => !sentKeys.has(shoppingItemKey(i)),
+          )
           if (!settings.bring.enabled) {
             return {
               ok: false,
@@ -848,10 +901,18 @@ export const useStore = create<Store>()(
               items: [],
             }
           }
-          if (items.length === 0) {
+          if (allItems.length === 0) {
             return {
               ok: false,
               message: 'Keine Zutaten im finalen Wochenplan.',
+              items: [],
+            }
+          }
+          if (pending.length === 0) {
+            return {
+              ok: false,
+              message:
+                'Alles schon auf Bring — keine neuen Zutaten seit dem letzten Senden.',
               items: [],
             }
           }
@@ -860,25 +921,21 @@ export const useStore = create<Store>()(
               uuid: settings.bring.userUuid,
               accessToken: settings.bring.accessToken,
               listUuid: settings.bring.listUuid,
-              items: items
-                .filter((i) => i.name.trim())
-                .map((i) => ({
-                  name: i.name.trim(),
-                  amount: [i.amount?.trim(), i.dish?.trim()]
-                    .filter(Boolean)
-                    .join(' · '),
-                })),
+              items: pending.map((i) => ({
+                name: i.name.trim(),
+                amount: [i.amount?.trim(), i.dish?.trim()]
+                  .filter(Boolean)
+                  .join(' · '),
+              })),
             })
             const lines =
               res.added ??
-              items
-                .filter((i) => i.name.trim())
-                .map((i) => {
-                  const bits = [i.name.trim()]
-                  if (i.amount?.trim()) bits.push(i.amount.trim())
-                  if (i.dish?.trim()) bits.push(i.dish.trim())
-                  return bits.join(' · ')
-                })
+              pending.map((i) => {
+                const bits = [i.name.trim()]
+                if (i.amount?.trim()) bits.push(i.amount.trim())
+                if (i.dish?.trim()) bits.push(i.dish.trim())
+                return bits.join(' · ')
+              })
             get().updateBring({
               lastPushAt: new Date().toISOString(),
               lastPushItems: lines,
@@ -886,15 +943,43 @@ export const useStore = create<Store>()(
             })
             if (res.ok) {
               const sentAt = new Date().toISOString()
+              const newKeys = pending.map((i) => shoppingItemKey(i))
+              const nextKeys = [...new Set([...sentKeys, ...newKeys])]
+              const mealIds = new Set(week.bringSentMealIds ?? [])
+              for (const raw of week.slots) {
+                for (const meal of normalizeWeekSlot(raw).meals) {
+                  mealIds.add(meal.id)
+                }
+              }
+              const nextMealIds = [...mealIds]
               set({
                 weeks: get().weeks.map((w) =>
                   w.id === get().activeWeekId
-                    ? { ...w, bringSentAt: sentAt }
+                    ? {
+                        ...w,
+                        bringSentAt: sentAt,
+                        bringSentKeys: nextKeys,
+                        bringSentMealIds: nextMealIds,
+                      }
                     : w,
                 ),
+                shoppingDraft: get().shoppingDraft.map((item) => ({
+                  ...item,
+                  bringSent:
+                    item.bringSent ||
+                    nextKeys.includes(shoppingItemKey(item)),
+                })),
               })
             }
-            return { ok: res.ok, message: res.message, items: lines }
+            return {
+              ok: res.ok,
+              message: res.ok
+                ? pending.length < allItems.length
+                  ? `${pending.length} neue Zutaten an Bring gesendet (${allItems.length - pending.length} waren schon drauf).`
+                  : res.message
+                : res.message,
+              items: lines,
+            }
           } catch (err) {
             const message =
               err instanceof Error ? err.message : 'Bring-Push fehlgeschlagen'
@@ -1064,6 +1149,9 @@ export const useStore = create<Store>()(
           ...current,
           ...p,
           shoppingDraft: draft,
+          weeks: normalizeWeeks(
+            (Array.isArray(p.weeks) ? p.weeks : current.weeks) as WeekPlan[],
+          ),
           recipes: repairRecipeCategories(
             repairRecipeCookidooLinks(
               (Array.isArray(p.recipes) ? p.recipes : current.recipes) as Recipe[],

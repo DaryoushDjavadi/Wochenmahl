@@ -99,6 +99,15 @@ export function resolveRecipeCategory(recipe: {
   return categoryFromKind(recipe.kind ?? 'meal')
 }
 
+export function tagToneClass(label: string): string {
+  const s = label.trim().toLowerCase()
+  let h = 0
+  for (let i = 0; i < s.length; i++) {
+    h = (h * 33 + s.charCodeAt(i)) >>> 0
+  }
+  return `tag-tone-${h % 8}`
+}
+
 export function repairRecipeCategories(recipes: Recipe[]): Recipe[] {
   return recipes.map((r) => {
     const category = resolveRecipeCategory(r)

@@ -68,15 +68,23 @@ export interface ShoppingItem {
   /** Recipe / dish this ingredient comes from */
   dish: string
   day?: Weekday
+  /** Already pushed to Bring for this week (delta tracking) */
+  bringSent?: boolean
 }
 
-export interface WeekSlot {
-  day: Weekday
+export interface WeekMeal {
+  id: string
   recipeId?: string
   title?: string
   sideRecipeId?: string
   sideTitle?: string
   fromPitchId?: string
+}
+
+export interface WeekSlot {
+  day: Weekday
+  /** One or more dishes for this day (main + optional side each). */
+  meals: WeekMeal[]
 }
 
 export interface WeekPlan {
@@ -87,6 +95,10 @@ export interface WeekPlan {
   createdAt: string
   /** Set when ingredients for this locked week were successfully pushed to Bring */
   bringSentAt?: string
+  /** Fingerprints of shopping lines already sent — kept across reopen for delta pushes */
+  bringSentKeys?: string[]
+  /** Meal ids whose ingredients were included in a Bring push */
+  bringSentMealIds?: string[]
 }
 
 export interface BringListOption {

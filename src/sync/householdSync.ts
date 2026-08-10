@@ -5,7 +5,7 @@ import {
   saveHousehold,
   type HouseholdState,
 } from '../api/store'
-import { repairRecipeCookidooLinks } from '../data/seed'
+import { normalizeWeeks, repairRecipeCookidooLinks } from '../data/seed'
 import { repairRecipeCategories } from '../data/categories'
 import { useStore } from '../store'
 
@@ -79,7 +79,9 @@ function applyRemote(state: HouseholdState, nextRevision: number) {
       ),
     ),
     pitches: (state.pitches as Pitch[]) ?? [],
-    weeks: (state.weeks as WeekPlan[]) ?? local.weeks,
+    weeks: normalizeWeeks(
+      ((state.weeks as WeekPlan[]) ?? local.weeks) as WeekPlan[],
+    ),
     activeWeekId: state.activeWeekId || local.activeWeekId,
     shoppingDraft: (state.shoppingDraft as ShoppingItem[]) ?? [],
     settings: {
