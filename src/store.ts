@@ -527,7 +527,7 @@ export const useStore = create<Store>()(
 
         assignSlot: (day, payload) => {
           const week = activeWeek(get)
-          if (!week) return
+          if (!week || week.status === 'locked') return
           const recipes = get().recipes
           const mainFromRecipe = payload.recipeId
             ? recipes.find((r) => r.id === payload.recipeId)?.title
@@ -561,19 +561,15 @@ export const useStore = create<Store>()(
                 ),
               }
             }),
-            shoppingDraft:
-              week.status === 'locked' ? [] : get().shoppingDraft,
+            shoppingDraft: get().shoppingDraft,
           })
         },
 
         clearSlot: (day) => {
           const week = activeWeek(get)
-          if (!week) return
+          if (!week || week.status === 'locked') return
           const nextSlots = week.slots.map((s) =>
             s.day === day ? { day } : s,
-          )
-          const stillHasMeal = nextSlots.some(
-            (s) => s.recipeId || s.title || s.sideRecipeId || s.sideTitle,
           )
           set({
             weeks: get().weeks.map((w) => {
@@ -581,15 +577,10 @@ export const useStore = create<Store>()(
               return {
                 ...w,
                 bringSentAt: undefined,
-                status:
-                  w.status === 'locked' && !stillHasMeal
-                    ? 'pitching'
-                    : w.status,
                 slots: nextSlots,
               }
             }),
-            shoppingDraft:
-              week.status === 'locked' ? [] : get().shoppingDraft,
+            shoppingDraft: get().shoppingDraft,
           })
         },
 
@@ -607,6 +598,8 @@ export const useStore = create<Store>()(
                 : w,
             ),
           })
+          // Build shopping list immediately for the shop tab.
+          get().buildShoppingList()
         },
 
         /** Locked weeks without any meals are invalid — open them again. */

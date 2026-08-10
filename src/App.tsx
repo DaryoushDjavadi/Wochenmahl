@@ -1106,10 +1106,10 @@ function WeekView({
               {pitching
                 ? plannedCount === 0
                   ? 'Tag tippen und Gericht wählen'
-                  : `${plannedCount}/7 geplant — dann festnageln`
+                  : `${plannedCount}/7 geplant — dann einkaufen`
                 : bringSent
                   ? `Zutaten an Bring gesendet · ${plannedCount} Tage`
-                  : `${plannedCount} Tage festgelegt`}
+                  : `${plannedCount} Tage fest — Plan öffnen zum Ändern`}
             </p>
           </div>
           <button
@@ -1156,17 +1156,19 @@ function WeekView({
             <>
               {plannedCount === 0 ? (
                 <p className="muted tiny week-lock-hint">
-                  Mindestens ein Gericht wählen — ohne Rezepte geht Festnageln
-                  nicht.
+                  Mindestens ein Gericht wählen — danach kannst du einkaufen.
                 </p>
               ) : (
                 <button
                   type="button"
                   className="btn accent week-action-primary"
-                  onClick={lockWeek}
+                  onClick={() => {
+                    lockWeek()
+                    onShop()
+                  }}
                 >
-                  <Pin size={18} aria-hidden />
-                  Woche festnageln
+                  <ShoppingBasket size={18} aria-hidden />
+                  Festnageln &amp; einkaufen
                 </button>
               )}
               <button
@@ -1186,7 +1188,7 @@ function WeekView({
                 onClick={onShop}
               >
                 <ShoppingBasket size={18} aria-hidden />
-                {bringEnabled ? 'Zur Einkaufsliste' : 'Einkaufsliste bauen'}
+                {bringEnabled ? 'Zur Einkaufsliste' : 'Zur Einkaufsliste'}
               </button>
               <button
                 type="button"
@@ -1194,7 +1196,7 @@ function WeekView({
                 onClick={reopenWeek}
               >
                 <Lock size={16} aria-hidden />
-                Woche wieder öffnen
+                Plan wieder öffnen
               </button>
             </>
           )}
@@ -1243,7 +1245,7 @@ function WeekView({
                     Bestellt
                   </span>
                 ) : null}
-                {hasMeal ? (
+                {hasMeal && pitching ? (
                   <button
                     type="button"
                     className="btn ghost sm"
@@ -1271,7 +1273,7 @@ function WeekView({
                     ))}
                   </div>
                 </>
-              ) : (
+              ) : pitching ? (
                 <button
                   type="button"
                   className="btn secondary sm"
@@ -1283,6 +1285,8 @@ function WeekView({
                 >
                   Gericht wählen
                 </button>
+              ) : (
+                <p className="muted tiny">Plan fest — zum Ändern wieder öffnen</p>
               )}
             </div>
           )
@@ -1296,7 +1300,11 @@ function WeekView({
           recipes={recipes}
           onBring={bringSent}
           onClose={() => setDetailDay(null)}
-          onClear={() => clearSlot(detailDay)}
+          onClear={
+            pitching
+              ? () => clearSlot(detailDay)
+              : undefined
+          }
         />
       ) : null}
 
@@ -1309,7 +1317,7 @@ function WeekView({
         />
       ) : null}
 
-      {pickingDay ? (
+      {pickingDay && pitching ? (
         <div className="modal-backdrop" onClick={closePicker}>
           <div className="modal stack" onClick={(e) => e.stopPropagation()}>
             <div className="section-head">
@@ -2229,6 +2237,14 @@ function ShopView({ onPlan }: { onPlan: () => void }) {
     return [...map.entries()]
   }, [items])
 
+  useEffect(() => {
+    if (!locked) return
+    if (shoppingDraft.length > 0) return
+    buildShoppingList()
+    // Only auto-load once per locked week visit — empty plans stay empty.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locked, activeWeekId])
+
   return (
     <div className="stack">
       <div className="panel stack">
@@ -2236,8 +2252,8 @@ function ShopView({ onPlan }: { onPlan: () => void }) {
           <div>
             <h2>Einkaufsliste</h2>
             <p className="lede">
-              Nach dem Festnageln: Liste laden — Zutaten nach Gericht geordnet,
-              Mengen anpassen, dann an Bring senden.
+              Wird beim Festnageln automatisch aus dem Plan gebaut. Mengen
+              anpassen, dann an Bring senden.
             </p>
           </div>
           <span
@@ -2252,9 +2268,8 @@ function ShopView({ onPlan }: { onPlan: () => void }) {
         {!locked ? (
           <>
             <p className="muted">
-              Während der Pitch-Phase wird nichts auf die Einkaufsliste / Bring
-              geschrieben. Gerichte festlegen, Woche festnageln, dann hierher
-              zurück.
+              Noch kein finaler Plan — im Wochenplan Gerichte wählen und
+              „Festnageln &amp; einkaufen“ tippen.
             </p>
             <button type="button" className="btn secondary" onClick={onPlan}>
               Zum Wochenplan
@@ -2265,19 +2280,19 @@ function ShopView({ onPlan }: { onPlan: () => void }) {
             <div className="row wrap">
               <button
                 type="button"
-                className="btn sm"
+                className="btn sm secondary"
                 onClick={() => {
                   const list = buildShoppingList()
                   setFlash({
                     ok: list.length > 0,
                     message:
                       list.length > 0
-                        ? `${list.length} Zutaten geladen — Mengen kannst du noch ändern.`
-                        : 'Im finalen Plan sind noch keine Gerichte mit Zutaten.',
+                        ? `${list.length} Zutaten neu geladen.`
+                        : 'Im Plan sind noch keine Gerichte mit Zutaten.',
                   })
                 }}
               >
-                Liste aus Plan laden
+                Liste neu laden
               </button>
               <button
                 type="button"
@@ -2327,8 +2342,7 @@ function ShopView({ onPlan }: { onPlan: () => void }) {
               </p>
             ) : (
               <p className="muted tiny">
-                Bring optional unter Menü → Einstellungen einschalten. Die Liste
-                unten kannst du trotzdem laden und bearbeiten.
+                Bring optional unter Menü → Einstellungen einschalten.
               </p>
             )}
           </>
@@ -2351,12 +2365,12 @@ function ShopView({ onPlan }: { onPlan: () => void }) {
       <div className="shopping-list panel stack">
         {!locked ? (
           <p className="muted">
-            Wartet auf finalen Wochenplan („Woche festnageln“).
+            Wartet auf „Festnageln &amp; einkaufen“ im Wochenplan.
           </p>
         ) : items.length === 0 ? (
           <p className="muted">
-            Noch leer — „Liste aus Plan laden“, Mengen anpassen, dann an Bring
-            senden.
+            Keine Zutaten im Plan — Gerichte brauchen hinterlegte Zutaten, oder
+            „Zutat +“ nutzen.
           </p>
         ) : (
           groups.map(([dish, groupItems]) => {
@@ -2443,7 +2457,7 @@ function ShopView({ onPlan }: { onPlan: () => void }) {
 
 function BringLiveListPanel({ refreshKey }: { refreshKey: number }) {
   const bring = useStore((s) => s.settings.bring)
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [purchase, setPurchase] = useState<BringListItem[]>([])
