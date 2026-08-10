@@ -4,6 +4,7 @@ import {
   CalendarRange,
   ChefHat,
   CircleHelp,
+  Home,
   Menu,
   MessageSquarePlus,
   Search,
@@ -769,9 +770,11 @@ function LoginScreen() {
 function TopBar({
   tab,
   onOpenMenuPage,
+  onHome,
 }: {
   tab: Tab
   onOpenMenuPage: (page: 'settings' | 'help') => void
+  onHome: () => void
 }) {
   const currentUser = useStore((s) => s.currentUser)!
   const logout = useStore((s) => s.logout)
@@ -806,10 +809,20 @@ function TopBar({
       : tab === 'help'
         ? 'Hilfe'
         : 'Wochenkochen'
+  const onHomePage = tab === 'week'
 
   return (
     <header className="topbar">
       <div className="topbar-left">
+        <button
+          type="button"
+          className={`home-btn ${onHomePage ? 'active' : ''}`}
+          onClick={onHome}
+          aria-label="Zur Startseite"
+          title="Startseite"
+        >
+          <Home size={18} aria-hidden />
+        </button>
         <div className="file-menu" ref={menuRef}>
           <button
             type="button"
@@ -824,6 +837,17 @@ function TopBar({
           </button>
           {menuOpen ? (
             <div className="file-menu-panel" role="menu">
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setMenuOpen(false)
+                  onHome()
+                }}
+              >
+                <Home size={16} />
+                Startseite
+              </button>
               <button
                 type="button"
                 role="menuitem"
@@ -860,10 +884,10 @@ function TopBar({
             </div>
           ) : null}
         </div>
-        <div className="brand-mark">
+        <button type="button" className="brand-mark brand-home" onClick={onHome}>
           <strong>{pageTitle}</strong>
           <span>{week?.label ?? 'Nächste Woche'}</span>
-        </div>
+        </button>
       </div>
       <button
         type="button"
@@ -968,79 +992,81 @@ function WeekView({
     setPendingBase(null)
   }
 
+  const pitching = week.status === 'pitching'
+
   return (
     <div className="stack">
-      <div className="panel">
-        <div className="section-head">
-          <div>
-            <h2>Wochenplan</h2>
-            <p className="lede">
-              Tippe auf einen Tag mit Gericht für Zutaten &amp; Details. Basis
-              wie Reis kann eine eigene Beilage bekommen.
+      <div className="panel week-toolbar">
+        <div className="week-toolbar-top">
+          <div className="week-toolbar-title">
+            <p className="week-toolbar-kicker">Wochenplan</p>
+            <h2>{week.label}</h2>
+            <p className="week-toolbar-meta">
+              {pitching
+                ? plannedCount === 0
+                  ? 'Noch leer — Tag antippen und Gericht wählen'
+                  : `${plannedCount} von 7 Tagen geplant`
+                : `Festgelegt · ${plannedCount} Tage`}
             </p>
           </div>
-          <div className="row wrap" style={{ justifyContent: 'flex-end' }}>
-            <button
-              type="button"
-              className="btn secondary sm"
-              onClick={() => setCalendarOpen(true)}
-            >
-              <CalendarRange size={16} aria-hidden />
-              Kalender
-            </button>
-            <span
-              className={`status-pill ${week.status === 'locked' ? '' : 'warn'}`}
-            >
-              {week.status === 'locked' ? 'Festgelegt' : 'Pitch-Phase'}
-            </span>
-          </div>
+          <button
+            type="button"
+            className="btn secondary sm week-cal-btn"
+            onClick={() => setCalendarOpen(true)}
+            aria-label="Andere Woche wählen"
+          >
+            <CalendarRange size={18} aria-hidden />
+          </button>
         </div>
-        <p className="muted tiny" style={{ marginTop: -4 }}>
-          Woche: <strong>{week.label}</strong>
-        </p>
-        <div className="row wrap">
-          {week.status === 'pitching' ? (
+
+        <ol className={`week-steps ${pitching ? 'is-pitch' : 'is-locked'}`} aria-label="Ablauf">
+          <li
+            className={
+              !pitching || plannedCount > 0 ? 'done' : 'current'
+            }
+          >
+            Planen
+          </li>
+          <li
+            className={
+              !pitching
+                ? 'done'
+                : plannedCount > 0
+                  ? 'current'
+                  : 'next'
+            }
+          >
+            Festnageln
+          </li>
+          <li className={pitching ? '' : 'current'}>Einkaufen</li>
+        </ol>
+
+        <div className="week-toolbar-actions">
+          {pitching ? (
             <>
-              <button type="button" className="btn sm" onClick={onPitch}>
-                Zum Pitch
-              </button>
               <button
                 type="button"
-                className="btn sm accent"
+                className="btn accent"
                 onClick={lockWeek}
                 disabled={plannedCount === 0}
               >
                 Woche festnageln
               </button>
+              <button type="button" className="btn ghost sm" onClick={onPitch}>
+                Ideen pitchen
+              </button>
             </>
           ) : (
             <>
-              <button type="button" className="btn sm secondary" onClick={reopenWeek}>
-                Wieder öffnen
+              <button type="button" className="btn accent" onClick={onShop}>
+                {bringEnabled ? 'Zur Einkaufsliste' : 'Einkaufsliste bauen'}
               </button>
-              {bringEnabled ? (
-                <button type="button" className="btn sm accent" onClick={onShop}>
-                  Zur Einkaufsliste / Bring
-                </button>
-              ) : (
-                <button type="button" className="btn sm" onClick={onShop}>
-                  Einkaufsliste bauen
-                </button>
-              )}
+              <button type="button" className="btn ghost sm" onClick={reopenWeek}>
+                Woche wieder öffnen
+              </button>
             </>
           )}
         </div>
-        {week.status === 'pitching' ? (
-          <p className="muted tiny" style={{ marginTop: 10 }}>
-            Einkaufen geht erst nach „Woche festnageln“ — dann bewusst an Bring
-            senden.
-          </p>
-        ) : (
-          <p className="muted tiny" style={{ marginTop: 10 }}>
-            Plan steht ({plannedCount} Tage). Jetzt kannst du die Zutaten
-            bewusst auf die Einkaufsliste / Bring legen.
-          </p>
-        )}
       </div>
 
       <div className="day-grid">
@@ -1089,11 +1115,6 @@ function WeekView({
               {hasMeal ? (
                 <>
                   <h3>{title}</h3>
-                  <p className="muted tiny">
-                    {side
-                      ? 'Basis + Beilage — tippen für Rezept-Details'
-                      : 'Tippen für Rezept-Details'}
-                  </p>
                   <div className="tags">
                     {recipe?.kind === 'base' ? (
                       <span className="tag green">Basis</span>
@@ -2038,6 +2059,17 @@ function SettingsView() {
     setSync({ status: next, detail: detail ?? '', revision: getSyncStatus().revision })
   }), [])
 
+  useEffect(() => {
+    const err = settings.cookidoo.lastError ?? ''
+    // Drop outdated server-login diagnostics from before the OAuth fix.
+    if (
+      err.includes('Host/Netzwerk prüfen') ||
+      (err.includes('Loginseite nicht erreichbar') && err.includes('Status 401'))
+    ) {
+      updateCookidoo({ lastError: undefined })
+    }
+  }, [settings.cookidoo.lastError, updateCookidoo])
+
   return (
     <div className="stack">
       <div className="panel stack">
@@ -2385,7 +2417,11 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <TopBar tab={tab} onOpenMenuPage={setTab} />
+      <TopBar
+        tab={tab}
+        onHome={() => setTab('week')}
+        onOpenMenuPage={setTab}
+      />
       {tab === 'week' ? (
         <WeekView
           onPitch={() => setTab('pitch')}

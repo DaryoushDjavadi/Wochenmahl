@@ -44,6 +44,15 @@ export function subscribeSync(fn: SyncListener) {
   }
 }
 
+function settingsForSync(settings: AppSettings): AppSettings {
+  // Transient UI errors must not stick in shared SQLite forever.
+  return {
+    ...settings,
+    bring: { ...settings.bring, lastError: undefined },
+    cookidoo: { ...settings.cookidoo, lastError: undefined },
+  }
+}
+
 function snapshotHousehold(): HouseholdState {
   const s = useStore.getState()
   return {
@@ -52,20 +61,33 @@ function snapshotHousehold(): HouseholdState {
     weeks: s.weeks,
     activeWeekId: s.activeWeekId,
     shoppingDraft: s.shoppingDraft,
-    settings: s.settings,
+    settings: settingsForSync(s.settings),
   }
 }
 
 function applyRemote(state: HouseholdState, nextRevision: number) {
   applyingRemote = true
   revision = nextRevision
+  const local = useStore.getState()
+  const remoteSettings = (state.settings as AppSettings) ?? local.settings
   useStore.setState({
-    recipes: (state.recipes as Recipe[]) ?? useStore.getState().recipes,
+    recipes: (state.recipes as Recipe[]) ?? local.recipes,
     pitches: (state.pitches as Pitch[]) ?? [],
-    weeks: (state.weeks as WeekPlan[]) ?? useStore.getState().weeks,
-    activeWeekId: state.activeWeekId || useStore.getState().activeWeekId,
+    weeks: (state.weeks as WeekPlan[]) ?? local.weeks,
+    activeWeekId: state.activeWeekId || local.activeWeekId,
     shoppingDraft: (state.shoppingDraft as ShoppingItem[]) ?? [],
-    settings: (state.settings as AppSettings) ?? useStore.getState().settings,
+    settings: {
+      ...remoteSettings,
+      bring: {
+        ...remoteSettings.bring,
+        // Keep ephemeral local diagnostics; never resurrect remote lastError.
+        lastError: local.settings.bring.lastError,
+      },
+      cookidoo: {
+        ...remoteSettings.cookidoo,
+        lastError: local.settings.cookidoo.lastError,
+      },
+    },
   })
   queueMicrotask(() => {
     applyingRemote = false

@@ -162,6 +162,52 @@ a {
   min-width: 0;
 }
 
+.brand-mark.brand-home {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 10px;
+}
+
+.brand-mark.brand-home:focus-visible {
+  outline: 2px solid rgba(47, 111, 78, 0.45);
+  outline-offset: 3px;
+}
+
+.home-btn {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  backdrop-filter: blur(10px);
+  border-radius: 12px;
+  color: var(--ink);
+  padding: 0;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.home-btn:hover,
+.home-btn:focus-visible {
+  border-color: rgba(47, 111, 78, 0.35);
+  background: rgba(47, 111, 78, 0.1);
+  outline: none;
+}
+
+.home-btn.active {
+  border-color: rgba(47, 111, 78, 0.4);
+  background: rgba(47, 111, 78, 0.14);
+  color: var(--good);
+}
+
 .brand-mark strong {
   font-family: var(--font-display);
   font-size: 1.35rem;
@@ -624,6 +670,124 @@ p {
 .reaction button.active-no {
   background: #f3d6d6;
   border-color: #9f2d2d55;
+}
+
+.week-toolbar {
+  display: grid;
+  gap: 14px;
+  padding: 18px 16px 16px;
+  background:
+    linear-gradient(145deg, rgba(255, 252, 246, 0.96), rgba(231, 240, 234, 0.72));
+}
+
+.week-toolbar-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.week-toolbar-title {
+  min-width: 0;
+}
+
+.week-toolbar-kicker {
+  margin: 0 0 4px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.week-toolbar-title h2 {
+  font-size: clamp(1.35rem, 5vw, 1.55rem);
+  line-height: 1.15;
+  letter-spacing: -0.04em;
+}
+
+.week-toolbar-meta {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.35;
+}
+
+.week-cal-btn {
+  flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border-radius: 14px;
+}
+
+.week-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 6px;
+}
+
+.week-steps li {
+  position: relative;
+  padding: 10px 8px 8px;
+  text-align: center;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.35);
+  border: 1px solid transparent;
+}
+
+.week-steps li::before {
+  content: '';
+  display: block;
+  width: 7px;
+  height: 7px;
+  margin: 0 auto 6px;
+  border-radius: 50%;
+  background: rgba(24, 36, 29, 0.18);
+}
+
+.week-steps li.current {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.78);
+  border-color: rgba(47, 111, 78, 0.28);
+  box-shadow: 0 6px 16px rgba(28, 46, 36, 0.06);
+}
+
+.week-steps li.current::before {
+  background: var(--good);
+  box-shadow: 0 0 0 3px rgba(47, 111, 78, 0.18);
+}
+
+.week-steps li.done {
+  color: var(--good);
+}
+
+.week-steps li.done::before {
+  background: var(--good);
+}
+
+.week-steps li.next::before {
+  background: var(--accent);
+}
+
+.week-toolbar-actions {
+  display: grid;
+  gap: 6px;
+}
+
+.week-toolbar-actions .btn:not(.ghost) {
+  width: 100%;
+}
+
+.week-toolbar-actions .btn.ghost {
+  justify-content: center;
+  color: var(--muted);
 }
 
 .day-grid {

@@ -622,6 +622,7 @@ export const useStore = create<Store>()(
         },
 
         linkCookidoo: async (email, password, country = 'de') => {
+          get().updateCookidoo({ lastError: undefined })
           try {
             const res = await linkCookidooAccount(email, password, country)
             const cookiesJson =
