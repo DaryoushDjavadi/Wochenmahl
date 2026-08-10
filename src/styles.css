@@ -1080,7 +1080,6 @@ p {
   box-shadow: var(--shadow-1);
 }
 
-.day-card.bring-sent,
 .recipe-card.bring-sent,
 .shop-row.bring-sent {
   border-color: rgba(56, 152, 214, 0.45);
