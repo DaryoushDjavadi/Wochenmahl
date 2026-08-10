@@ -1,4 +1,5 @@
 import type { AppSettings, Recipe, User, WeekPlan, WeekSlot } from '../types'
+import { repairRecipeCategories } from './categories'
 
 export const USERS: Record<'darius' | 'wendy', User> = {
   darius: {
@@ -25,7 +26,7 @@ export const WEEKDAYS = [
   { id: 'so', label: 'So' },
 ] as const
 
-export const SEED_RECIPES: Recipe[] = [
+export const SEED_RECIPES: Recipe[] = repairRecipeCategories([
   {
     id: 'r-rice',
     title: 'Reis',
@@ -207,7 +208,7 @@ export const SEED_RECIPES: Recipe[] = [
     createdBy: 'darius',
     createdAt: '2026-08-06T10:00:00.000Z',
   },
-]
+])
 
 export function mealLabel(
   main?: string | null,

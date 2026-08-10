@@ -12,11 +12,25 @@ export interface Ingredient {
   amount?: string
 }
 
+export type RecipeCategory =
+  | 'main'
+  | 'soup'
+  | 'salad'
+  | 'side'
+  | 'base'
+  | 'breakfast'
+  | 'dessert'
+  | 'snack'
+  | 'drink'
+  | 'other'
+
 export interface Recipe {
   id: string
   title: string
-  /** meal = full dish, base = e.g. rice, side = beilage */
+  /** meal = full dish, base = e.g. rice, side = beilage (for week pairing) */
   kind: 'meal' | 'base' | 'side'
+  /** Browse / filter category (Hauptspeise, Dessert, …) */
+  category?: RecipeCategory
   tags: string[]
   ingredients: Ingredient[]
   notes?: string

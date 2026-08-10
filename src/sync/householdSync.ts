@@ -6,6 +6,7 @@ import {
   type HouseholdState,
 } from '../api/store'
 import { repairRecipeCookidooLinks } from '../data/seed'
+import { repairRecipeCategories } from '../data/categories'
 import { useStore } from '../store'
 
 export type SyncStatus =
@@ -72,8 +73,10 @@ function applyRemote(state: HouseholdState, nextRevision: number) {
   const local = useStore.getState()
   const remoteSettings = (state.settings as AppSettings) ?? local.settings
   useStore.setState({
-    recipes: repairRecipeCookidooLinks(
-      ((state.recipes as Recipe[]) ?? local.recipes) as Recipe[],
+    recipes: repairRecipeCategories(
+      repairRecipeCookidooLinks(
+        ((state.recipes as Recipe[]) ?? local.recipes) as Recipe[],
+      ),
     ),
     pitches: (state.pitches as Pitch[]) ?? [],
     weeks: (state.weeks as WeekPlan[]) ?? local.weeks,

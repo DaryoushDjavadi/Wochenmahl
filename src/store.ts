@@ -16,11 +16,17 @@ import {
   repairRecipeCookidooLinks,
   weekIdFromMonday,
 } from './data/seed'
+import {
+  kindFromCategory,
+  repairRecipeCategories,
+  resolveRecipeCategory,
+} from './data/categories'
 import type {
   AppSettings,
   Ingredient,
   Pitch,
   Recipe,
+  RecipeCategory,
   ShoppingItem,
   UserId,
   WeekPlan,
@@ -154,9 +160,11 @@ export const useStore = create<Store>()(
         addRecipe: (recipe) => {
           const user = get().currentUser
           if (!user) return
+          const category = resolveRecipeCategory(recipe)
           const next: Recipe = {
             ...recipe,
-            kind: recipe.kind ?? 'meal',
+            category,
+            kind: recipe.kind ?? kindFromCategory(category),
             id: uid('r'),
             createdBy: user,
             createdAt: new Date().toISOString(),
@@ -166,18 +174,22 @@ export const useStore = create<Store>()(
 
         updateRecipe: (id, patch) => {
           set({
-            recipes: get().recipes.map((r) =>
-              r.id === id
-                ? {
-                    ...r,
-                    ...patch,
-                    kind: patch.kind ?? r.kind ?? 'meal',
-                    id: r.id,
-                    createdBy: r.createdBy,
-                    createdAt: r.createdAt,
-                  }
-                : r,
-            ),
+            recipes: get().recipes.map((r) => {
+              if (r.id !== id) return r
+              const merged = {
+                ...r,
+                ...patch,
+                id: r.id,
+                createdBy: r.createdBy,
+                createdAt: r.createdAt,
+              }
+              const category = resolveRecipeCategory(merged)
+              return {
+                ...merged,
+                category,
+                kind: patch.kind ?? kindFromCategory(category),
+              }
+            }),
           })
         },
 
@@ -253,9 +265,11 @@ export const useStore = create<Store>()(
           const user = get().currentUser
           if (!user) return ''
           const id = uid('r')
+          const category = resolveRecipeCategory(recipe)
           const next: Recipe = {
             ...recipe,
-            kind: recipe.kind ?? 'meal',
+            category,
+            kind: recipe.kind ?? kindFromCategory(category),
             id,
             createdBy: user,
             createdAt: new Date().toISOString(),
@@ -267,10 +281,17 @@ export const useStore = create<Store>()(
         importCookidooRecipe: ({ title, url, ingredientsText, notes }) => {
           const user = get().currentUser
           if (!user) return
+          const category = resolveRecipeCategory({
+            title,
+            tags: ['cookidoo'],
+            notes,
+            kind: 'meal',
+          })
           const next: Recipe = {
             id: uid('r'),
             title: title.trim() || 'Cookidoo Rezept',
-            kind: 'meal',
+            category,
+            kind: kindFromCategory(category),
             tags: ['cookidoo'],
             ingredients: parseIngredientLines(ingredientsText),
             notes,
@@ -379,6 +400,7 @@ export const useStore = create<Store>()(
                 id,
                 title,
                 kind: pitch.sideTitle || pitch.sideRecipeId ? 'base' : 'meal',
+                category: pitch.sideTitle || pitch.sideRecipeId ? 'base' : 'main',
                 tags: ['pitch'],
                 ingredients: [],
                 notes: pitch.note.trim() || undefined,
@@ -409,6 +431,7 @@ export const useStore = create<Store>()(
                 id,
                 title: freeSideTitle,
                 kind: 'side',
+                category: 'side',
                 tags: ['pitch', 'beilage'],
                 ingredients: [],
                 notes: pitch.note.trim()
@@ -945,6 +968,11 @@ export const useStore = create<Store>()(
             }
             addImportedRecipe({
               title: res.recipe.title,
+              category: (['main', 'soup', 'salad', 'side', 'base', 'breakfast', 'dessert', 'snack', 'drink', 'other'].includes(
+                res.recipe.category || '',
+              )
+                ? res.recipe.category
+                : undefined) as RecipeCategory | undefined,
               kind: 'meal',
               tags: res.recipe.tags || ['cookidoo'],
               ingredients: (res.recipe.ingredients || []).map((i) => ({
@@ -1015,8 +1043,10 @@ export const useStore = create<Store>()(
           ...current,
           ...p,
           shoppingDraft: draft,
-          recipes: repairRecipeCookidooLinks(
-            (Array.isArray(p.recipes) ? p.recipes : current.recipes) as Recipe[],
+          recipes: repairRecipeCategories(
+            repairRecipeCookidooLinks(
+              (Array.isArray(p.recipes) ? p.recipes : current.recipes) as Recipe[],
+            ),
           ),
         }
       },

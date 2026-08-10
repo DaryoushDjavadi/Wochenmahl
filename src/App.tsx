@@ -30,6 +30,12 @@ import {
   weekIdFromMonday,
 } from './data/seed'
 import {
+  CATEGORY_LABEL,
+  RECIPE_CATEGORIES,
+  kindFromCategory,
+  resolveRecipeCategory,
+} from './data/categories'
+import {
   fetchBringList,
   listCookidooCollectionRecipes,
   listCookidooCollections,
@@ -43,7 +49,15 @@ import {
   subscribeSync,
   type SyncStatus,
 } from './sync/householdSync'
-import type { Ingredient, Pitch, Recipe, UserId, WeekSlot, Weekday } from './types'
+import type {
+  Ingredient,
+  Pitch,
+  Recipe,
+  RecipeCategory,
+  UserId,
+  WeekSlot,
+  Weekday,
+} from './types'
 
 type Tab = 'week' | 'pitch' | 'recipes' | 'shop' | 'settings' | 'help'
 
@@ -65,12 +79,6 @@ const WEEKDAY_COLOR_CLASS: Record<Weekday, string> = {
   fr: 'day-title-fr',
   sa: 'day-title-sa',
   so: 'day-title-so',
-}
-
-const KIND_LABEL: Record<'meal' | 'base' | 'side', string> = {
-  meal: 'Gericht',
-  base: 'Basis',
-  side: 'Beilage',
 }
 
 function Avatar({ userId, size = 28 }: { userId: UserId; size?: number }) {
@@ -125,6 +133,9 @@ function RecipeDetailBlock({
   const title = recipe?.title || fallbackTitle
   if (!title) return null
   const kind = recipe?.kind ?? 'meal'
+  const category = recipe
+    ? resolveRecipeCategory(recipe)
+    : undefined
 
   return (
     <section className={`recipe-detail ${onBring ? 'on-bring' : ''}`}>
@@ -134,7 +145,7 @@ function RecipeDetailBlock({
           <h3>{title}</h3>
           {recipe ? (
             <p className="muted tiny">
-              {KIND_LABEL[kind]} · von {USERS[recipe.createdBy].name} ·{' '}
+              {CATEGORY_LABEL[category!]} · von {USERS[recipe.createdBy].name} ·{' '}
               {recipe.ingredients.length} Zutaten
             </p>
           ) : (
@@ -145,6 +156,11 @@ function RecipeDetailBlock({
       </div>
       <div className="tags">
         {onBring ? <span className="tag tag-bring">Auf Bring</span> : null}
+        {category ? (
+          <span className={`tag tag-cat tag-cat-${category}`}>
+            {CATEGORY_LABEL[category]}
+          </span>
+        ) : null}
         {kind === 'base' ? <span className="tag green">Basis</span> : null}
         {kind === 'side' ? <span className="tag">Beilage</span> : null}
         {recipe?.tags.map((t) => (
@@ -1679,7 +1695,11 @@ function RecipesView() {
   const [flash, setFlash] = useState<string | null>(null)
   const [title, setTitle] = useState('')
   const [kind, setKind] = useState<'meal' | 'base' | 'side'>('meal')
+  const [category, setCategory] = useState<RecipeCategory>('main')
   const [tags, setTags] = useState('')
+  const [categoryFilter, setCategoryFilter] = useState<RecipeCategory | 'all'>(
+    'all',
+  )
   const [ingredients, setIngredients] = useState('')
   const [notes, setNotes] = useState('')
   const [cookidooUrl, setCookidooUrl] = useState('')
@@ -1705,6 +1725,24 @@ function RecipesView() {
     }
     return ids
   }, [weeks, activeWeekId])
+
+  const recipeGroups = useMemo(() => {
+    const filtered =
+      categoryFilter === 'all'
+        ? recipes
+        : recipes.filter((r) => resolveRecipeCategory(r) === categoryFilter)
+    const map = new Map<RecipeCategory, Recipe[]>()
+    for (const r of filtered) {
+      const cat = resolveRecipeCategory(r)
+      const list = map.get(cat)
+      if (list) list.push(r)
+      else map.set(cat, [r])
+    }
+    return RECIPE_CATEGORIES.map((c) => ({
+      ...c,
+      items: map.get(c.id) ?? [],
+    })).filter((g) => g.items.length > 0)
+  }, [recipes, categoryFilter])
 
   const clearUndoTimers = () => {
     if (undoTimerRef.current) {
@@ -1776,6 +1814,7 @@ function RecipesView() {
     setEditingId(null)
     setTitle('')
     setKind('meal')
+    setCategory('main')
     setTags('')
     setIngredients('')
     setNotes('')
@@ -1790,7 +1829,9 @@ function RecipesView() {
   const openEdit = (recipe: (typeof recipes)[number]) => {
     setEditingId(recipe.id)
     setTitle(recipe.title)
-    setKind(recipe.kind ?? 'meal')
+    const cat = resolveRecipeCategory(recipe)
+    setCategory(cat)
+    setKind(recipe.kind ?? kindFromCategory(cat))
     setTags(recipe.tags.join(', '))
     setIngredients(
       recipe.ingredients
@@ -1819,7 +1860,8 @@ function RecipesView() {
     if (!title.trim()) return
     const payload = {
       title: title.trim(),
-      kind,
+      category,
+      kind: kindFromCategory(category),
       tags: tags
         .split(',')
         .map((t) => t.trim())
@@ -1828,6 +1870,7 @@ function RecipesView() {
       notes: notes.trim() || undefined,
       cookidooUrl: cookidooUrl.trim() || undefined,
     }
+    void kind
     if (editingId) {
       updateRecipe(editingId, payload)
       setFlash(`„${payload.title}“ gespeichert`)
@@ -1847,7 +1890,7 @@ function RecipesView() {
           <div>
             <h2>Rezepte</h2>
             <p className="lede">
-              Bibliothek — anlegen, anpassen, duplizieren oder löschen.
+              Nach Kategorie sortiert — auch Cookidoo-Imports werden zugeordnet.
             </p>
           </div>
         </div>
@@ -1866,6 +1909,35 @@ function RecipesView() {
             </button>
           ) : null}
         </div>
+        <div className="category-filters" role="tablist" aria-label="Kategorien">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={categoryFilter === 'all'}
+            className={`chip-filter${categoryFilter === 'all' ? ' active' : ''}`}
+            onClick={() => setCategoryFilter('all')}
+          >
+            Alle ({recipes.length})
+          </button>
+          {RECIPE_CATEGORIES.map((c) => {
+            const count = recipes.filter(
+              (r) => resolveRecipeCategory(r) === c.id,
+            ).length
+            if (!count) return null
+            return (
+              <button
+                key={c.id}
+                type="button"
+                role="tab"
+                aria-selected={categoryFilter === c.id}
+                className={`chip-filter${categoryFilter === c.id ? ' active' : ''}`}
+                onClick={() => setCategoryFilter(c.id)}
+              >
+                {c.label} ({count})
+              </button>
+            )
+          })}
+        </div>
         {undo ? (
           <div className="undo-banner" role="status">
             <p>
@@ -1880,104 +1952,121 @@ function RecipesView() {
         {browseFlash ? <div className="flash">{browseFlash}</div> : null}
       </div>
 
-      {recipes.map((r) => {
-        const onBring = recipesOnBring.has(r.id)
-        return (
-        <article
-          key={r.id}
-          className={`recipe-card clickable ${detailId === r.id ? 'open' : ''}${
-            onBring ? ' bring-sent' : ''
-          }`}
-          role="button"
-          tabIndex={0}
-          onClick={() => setDetailId(detailId === r.id ? null : r.id)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault()
-              setDetailId(detailId === r.id ? null : r.id)
-            }
-          }}
-        >
-          <div className="row">
-            <div className="grow">
-              <h3>{r.title}</h3>
-              <p className="muted tiny">
-                von {USERS[r.createdBy].name} · {r.ingredients.length} Zutaten
-                {detailId === r.id ? '' : ' · tippen für Details'}
-              </p>
-            </div>
-            <Avatar userId={r.createdBy} />
+      {recipeGroups.length === 0 ? (
+        <div className="panel">
+          <p className="muted">Keine Rezepte in dieser Kategorie.</p>
+        </div>
+      ) : null}
+
+      {recipeGroups.map((group) => (
+        <section key={group.id} className="recipe-category-group stack">
+          <div className="recipe-category-head">
+            <h3>{group.label}</h3>
+            <span className="muted tiny">{group.items.length}</span>
           </div>
-          <div className="tags">
-            {onBring ? <span className="tag tag-bring">Auf Bring</span> : null}
-            {(r.kind ?? 'meal') === 'base' ? (
-              <span className="tag green">Basis</span>
-            ) : null}
-            {(r.kind ?? 'meal') === 'side' ? (
-              <span className="tag">Beilage</span>
-            ) : null}
-            {r.tags.map((t) => (
-              <span key={t} className="tag">
-                {t}
-              </span>
-            ))}
-            {r.cookidooUrl ? <span className="tag green">Cookidoo</span> : null}
-          </div>
-          {detailId === r.id ? (
-            <>
-              {r.notes ? <p className="muted">{r.notes}</p> : null}
-              <IngredientList items={r.ingredients} onBring={onBring} />
-              {r.cookidooUrl ? (
-                <a
-                  className="tiny"
-                  href={r.cookidooUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  In Cookidoo öffnen ↗
-                </a>
-              ) : null}
-              <div
-                className="row wrap"
-                onClick={(e) => e.stopPropagation()}
-                onKeyDown={(e) => e.stopPropagation()}
+          {group.items.map((r) => {
+            const onBring = recipesOnBring.has(r.id)
+            const cat = resolveRecipeCategory(r)
+            return (
+              <article
+                key={r.id}
+                className={`recipe-card clickable ${detailId === r.id ? 'open' : ''}${
+                  onBring ? ' bring-sent' : ''
+                }`}
+                role="button"
+                tabIndex={0}
+                onClick={() => setDetailId(detailId === r.id ? null : r.id)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    setDetailId(detailId === r.id ? null : r.id)
+                  }
+                }}
               >
-                <button
-                  type="button"
-                  className="btn sm secondary"
-                  onClick={() => openEdit(r)}
-                >
-                  Anpassen
-                </button>
-                <button
-                  type="button"
-                  className="btn sm secondary"
-                  onClick={() => {
-                    const id = duplicateRecipe(r.id)
-                    if (id) {
-                      setDetailId(id)
-                      setFlash(`Kopie von „${r.title}“ angelegt`)
-                    }
-                  }}
-                >
-                  Duplizieren
-                </button>
-                <button
-                  type="button"
-                  className="btn sm danger"
-                  onClick={() => requestDelete(r)}
-                >
-                  Löschen
-                </button>
-              </div>
-            </>
-          ) : r.notes ? (
-            <p className="muted">{r.notes}</p>
-          ) : null}
-        </article>
-        )
-      })}
+                <div className="row">
+                  <div className="grow">
+                    <h3>{r.title}</h3>
+                    <p className="muted tiny">
+                      von {USERS[r.createdBy].name} · {r.ingredients.length}{' '}
+                      Zutaten
+                      {detailId === r.id ? '' : ' · tippen für Details'}
+                    </p>
+                  </div>
+                  <Avatar userId={r.createdBy} />
+                </div>
+                <div className="tags">
+                  {onBring ? (
+                    <span className="tag tag-bring">Auf Bring</span>
+                  ) : null}
+                  <span className={`tag tag-cat tag-cat-${cat}`}>
+                    {CATEGORY_LABEL[cat]}
+                  </span>
+                  {r.tags.map((t) => (
+                    <span key={t} className="tag">
+                      {t}
+                    </span>
+                  ))}
+                  {r.cookidooUrl ? (
+                    <span className="tag green">Cookidoo</span>
+                  ) : null}
+                </div>
+                {detailId === r.id ? (
+                  <>
+                    {r.notes ? <p className="muted">{r.notes}</p> : null}
+                    <IngredientList items={r.ingredients} onBring={onBring} />
+                    {r.cookidooUrl ? (
+                      <a
+                        className="tiny"
+                        href={r.cookidooUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        In Cookidoo öffnen ↗
+                      </a>
+                    ) : null}
+                    <div
+                      className="row wrap"
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        type="button"
+                        className="btn sm secondary"
+                        onClick={() => openEdit(r)}
+                      >
+                        Anpassen
+                      </button>
+                      <button
+                        type="button"
+                        className="btn sm secondary"
+                        onClick={() => {
+                          const id = duplicateRecipe(r.id)
+                          if (id) {
+                            setDetailId(id)
+                            setFlash(`Kopie von „${r.title}“ angelegt`)
+                          }
+                        }}
+                      >
+                        Duplizieren
+                      </button>
+                      <button
+                        type="button"
+                        className="btn sm danger"
+                        onClick={() => requestDelete(r)}
+                      >
+                        Löschen
+                      </button>
+                    </div>
+                  </>
+                ) : r.notes ? (
+                  <p className="muted">{r.notes}</p>
+                ) : null}
+              </article>
+            )
+          })}
+        </section>
+      ))}
 
       {formOpen ? (
         <div
@@ -2010,18 +2099,25 @@ function RecipesView() {
               />
             </div>
             <div className="field">
-              <label htmlFor="r-kind">Typ</label>
+              <label htmlFor="r-category">Kategorie</label>
               <select
-                id="r-kind"
-                value={kind}
-                onChange={(e) =>
-                  setKind(e.target.value as 'meal' | 'base' | 'side')
-                }
+                id="r-category"
+                value={category}
+                onChange={(e) => {
+                  const next = e.target.value as RecipeCategory
+                  setCategory(next)
+                  setKind(kindFromCategory(next))
+                }}
               >
-                <option value="meal">Volles Gericht</option>
-                <option value="base">Basis (z. B. Reis)</option>
-                <option value="side">Beilage</option>
+                {RECIPE_CATEGORIES.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.label}
+                  </option>
+                ))}
               </select>
+              <p className="muted tiny">
+                {RECIPE_CATEGORIES.find((c) => c.id === category)?.hint}
+              </p>
             </div>
             <div className="field">
               <label htmlFor="r-tags">Tags (Komma)</label>

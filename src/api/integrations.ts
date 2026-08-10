@@ -48,6 +48,7 @@ export type CookidooImportResult = {
     ingredients: { name: string; amount?: string | null }[]
     notes?: string
     cookidooUrl?: string
+    category?: string
     tags?: string[]
   }
 }

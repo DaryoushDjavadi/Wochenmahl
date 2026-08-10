@@ -223,6 +223,96 @@ function normalize_ingredients(array $recipe): array {
     return $out;
 }
 
+/**
+ * Map Cookidoo labels / title hints to our app categories.
+ * @return array{category:string,tags:list<string>}
+ */
+function extract_recipe_category_meta(array $recipe): array {
+    $tags = ['cookidoo'];
+    $labels = [];
+
+    $collect = function ($node) use (&$collect, &$labels): void {
+        if (is_string($node)) {
+            $t = trim($node);
+            if ($t !== '') {
+                $labels[] = $t;
+            }
+            return;
+        }
+        if (!is_array($node)) {
+            return;
+        }
+        foreach (['name', 'title', 'label', 'value', 'notation', 'text'] as $key) {
+            if (isset($node[$key]) && is_string($node[$key]) && trim($node[$key]) !== '') {
+                $labels[] = trim($node[$key]);
+            }
+        }
+        foreach ($node as $child) {
+            if (is_array($child) || is_string($child)) {
+                $collect($child);
+            }
+        }
+    };
+
+    foreach ([
+        'tags',
+        'categories',
+        'recipeCategories',
+        'dishTypes',
+        'courses',
+        'course',
+        'primaryFoodCategory',
+        'foodCategories',
+        'recipeTags',
+        'classification',
+    ] as $key) {
+        if (isset($recipe[$key])) {
+            $collect($recipe[$key]);
+        }
+    }
+
+    $title = (string) ($recipe['name'] ?? $recipe['title'] ?? '');
+    $blob = mb_strtolower(trim($title . ' ' . implode(' ', $labels)), 'UTF-8');
+
+    $rules = [
+        'dessert' => '/dessert|nachtisch|nachspeise|kuchen|torte|kekse|cookie|eis|mousse|pudding|süßspeise|suessspeise|brownie|muffin|tiramisu|backen\s*[-–]?\s*süß|baking\s*[-–]?\s*sweet/',
+        'soup' => '/suppe|eintopf|soup|stew|brühe|bruehe/',
+        'salad' => '/salat|salad|\bbowl\b/',
+        'breakfast' => '/frühstück|fruehstueck|breakfast|müsli|muesli|porridge/',
+        'drink' => '/getränk|getraenk|\bdrink\b|shake|smoothie|saft|limonade/',
+        'snack' => '/snack|fingerfood|vorspeise|starter|appetizer/',
+        'side' => '/beilage|side\s*dish/',
+        'base' => '/\bbasis\b/',
+        'main' => '/hauptspeise|hauptgericht|main\s*dish|abendessen|dinner/',
+    ];
+
+    $category = 'main';
+    foreach ($rules as $cat => $re) {
+        if (preg_match($re, $blob)) {
+            $category = $cat;
+            break;
+        }
+    }
+
+    foreach ($labels as $label) {
+        $short = trim($label);
+        if ($short === '' || strcasecmp($short, 'cookidoo') === 0) {
+            continue;
+        }
+        if (!in_array($short, $tags, true)) {
+            $tags[] = $short;
+        }
+    }
+    if ($category !== 'main' && !in_array($category, $tags, true)) {
+        $tags[] = $category;
+    }
+
+    return [
+        'category' => $category,
+        'tags' => array_slice($tags, 0, 12),
+    ];
+}
+
 function is_list_array(array $arr): bool {
     if (function_exists('array_is_list')) {
         return array_is_list($arr);
@@ -907,6 +997,7 @@ if ($action === 'importRecipe') {
     $recipe = $res['json'];
     $title = $recipe['name'] ?? $recipe['title'] ?? ('Cookidoo ' . $recipeId);
     $ingredients = normalize_ingredients($recipe);
+    $meta = extract_recipe_category_meta(is_array($recipe) ? $recipe : []);
     $notes = '';
     if (isset($recipe['totalTime'])) {
         $notes = 'Gesamtzeit: ' . $recipe['totalTime'];
@@ -921,7 +1012,8 @@ if ($action === 'importRecipe') {
             'ingredients' => $ingredients,
             'notes' => $notes,
             'cookidooUrl' => rtrim($base, '/') . "/recipes/recipe/{$lang}/{$recipeId}",
-            'tags' => ['cookidoo'],
+            'category' => $meta['category'],
+            'tags' => $meta['tags'],
         ],
     ]);
 }

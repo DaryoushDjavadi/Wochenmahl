@@ -465,6 +465,93 @@ p {
     0 0 0 3px rgba(0, 207, 204, 0.18);
 }
 
+.category-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.chip-filter {
+  appearance: none;
+  border: 1px solid rgba(208, 213, 221, 0.8);
+  background: var(--panel);
+  border-radius: var(--radius-pill);
+  padding: 8px 12px;
+  font-weight: 700;
+  font-size: 0.78rem;
+  color: var(--muted);
+  box-shadow: var(--shadow-1);
+}
+
+.chip-filter.active {
+  color: #0b4f4c;
+  background: var(--accent-soft);
+  border-color: rgba(0, 207, 204, 0.35);
+  box-shadow: var(--shadow-inset);
+}
+
+.recipe-category-group {
+  gap: 10px;
+}
+
+.recipe-category-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 4px;
+}
+
+.recipe-category-head h3 {
+  font-size: 1rem;
+  letter-spacing: -0.02em;
+}
+
+.tag-cat {
+  background: #eef1f4;
+  color: #1d2939;
+  border-color: rgba(208, 213, 221, 0.8);
+}
+
+.tag-cat-main {
+  background: #d6efff;
+  color: #1a4f75;
+}
+
+.tag-cat-dessert {
+  background: #ffe0ef;
+  color: #8a2f5b;
+}
+
+.tag-cat-soup {
+  background: #ffe8a3;
+  color: #7a4510;
+}
+
+.tag-cat-salad,
+.tag-cat-side {
+  background: var(--good-soft);
+  color: #1f5c44;
+}
+
+.tag-cat-base {
+  background: #e8e4ff;
+  color: #3f3a7a;
+}
+
+.tag-cat-breakfast {
+  background: #fff0d6;
+  color: #7a4a10;
+}
+
+.tag-cat-snack,
+.tag-cat-drink,
+.tag-cat-other {
+  background: #eef1f4;
+  color: #475467;
+}
+
 .tags {
   display: flex;
   flex-wrap: wrap;
