@@ -1224,6 +1224,17 @@ p {
   opacity: 0.72;
 }
 
+.week-lock-hint {
+  margin: 0;
+  padding: 10px 12px;
+  text-align: center;
+  border-radius: 18px;
+  background: var(--warn-soft);
+  color: #7a4510;
+  border: 1px solid rgba(212, 160, 23, 0.35);
+  font-weight: 700;
+}
+
 .week-toolbar-actions {
   display: grid;
   gap: 8px;

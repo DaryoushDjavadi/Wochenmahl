@@ -1013,6 +1013,7 @@ function WeekView({
   const assignSlot = useStore((s) => s.assignSlot)
   const clearSlot = useStore((s) => s.clearSlot)
   const lockWeek = useStore((s) => s.lockWeek)
+  const ensureWeekNotEmptyLocked = useStore((s) => s.ensureWeekNotEmptyLocked)
   const reopenWeek = useStore((s) => s.reopenWeek)
   const selectWeekByDate = useStore((s) => s.selectWeekByDate)
   const [pickingDay, setPickingDay] = useState<Weekday | null>(null)
@@ -1050,6 +1051,10 @@ function WeekView({
     () => week?.slots.find((s) => s.day === detailDay) ?? null,
     [week, detailDay],
   )
+
+  useEffect(() => {
+    ensureWeekNotEmptyLocked()
+  }, [week?.id, week?.status, plannedCount, ensureWeekNotEmptyLocked])
 
   if (!week) return null
 
@@ -1149,15 +1154,21 @@ function WeekView({
         <div className="week-toolbar-actions">
           {pitching ? (
             <>
-              <button
-                type="button"
-                className="btn accent week-action-primary"
-                onClick={lockWeek}
-                disabled={plannedCount === 0}
-              >
-                <Pin size={18} aria-hidden />
-                Woche festnageln
-              </button>
+              {plannedCount === 0 ? (
+                <p className="muted tiny week-lock-hint">
+                  Mindestens ein Gericht wählen — ohne Rezepte geht Festnageln
+                  nicht.
+                </p>
+              ) : (
+                <button
+                  type="button"
+                  className="btn accent week-action-primary"
+                  onClick={lockWeek}
+                >
+                  <Pin size={18} aria-hidden />
+                  Woche festnageln
+                </button>
+              )}
               <button
                 type="button"
                 className="btn secondary week-action-secondary"

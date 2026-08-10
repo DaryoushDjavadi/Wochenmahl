@@ -83,6 +83,7 @@ interface Store {
   ) => void
   clearSlot: (day: Weekday) => void
   lockWeek: () => void
+  ensureWeekNotEmptyLocked: () => void
   reopenWeek: () => void
   selectWeekByDate: (date: Date) => void
   buildShoppingList: () => ShoppingItem[]
@@ -568,16 +569,25 @@ export const useStore = create<Store>()(
         clearSlot: (day) => {
           const week = activeWeek(get)
           if (!week) return
+          const nextSlots = week.slots.map((s) =>
+            s.day === day ? { day } : s,
+          )
+          const stillHasMeal = nextSlots.some(
+            (s) => s.recipeId || s.title || s.sideRecipeId || s.sideTitle,
+          )
           set({
             weeks: get().weeks.map((w) => {
               if (w.id !== get().activeWeekId) return w
               return {
                 ...w,
                 bringSentAt: undefined,
-                slots: w.slots.map((s) => (s.day === day ? { day } : s)),
+                status:
+                  w.status === 'locked' && !stillHasMeal
+                    ? 'pitching'
+                    : w.status,
+                slots: nextSlots,
               }
             }),
-            // Einkaufsliste neu laden, falls der Plan schon festgenagelt war
             shoppingDraft:
               week.status === 'locked' ? [] : get().shoppingDraft,
           })
@@ -596,6 +606,24 @@ export const useStore = create<Store>()(
                 ? { ...w, status: 'locked', bringSentAt: undefined }
                 : w,
             ),
+          })
+        },
+
+        /** Locked weeks without any meals are invalid — open them again. */
+        ensureWeekNotEmptyLocked: () => {
+          const week = activeWeek(get)
+          if (!week || week.status !== 'locked') return
+          const hasMeal = week.slots.some(
+            (s) => s.recipeId || s.title || s.sideRecipeId || s.sideTitle,
+          )
+          if (hasMeal) return
+          set({
+            weeks: get().weeks.map((w) =>
+              w.id === get().activeWeekId
+                ? { ...w, status: 'pitching', bringSentAt: undefined }
+                : w,
+            ),
+            shoppingDraft: [],
           })
         },
 
