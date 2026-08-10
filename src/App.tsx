@@ -229,6 +229,23 @@ function sameDay(a: Date, b: Date) {
   )
 }
 
+const JS_DAY_TO_WEEKDAY: Weekday[] = [
+  'so',
+  'mo',
+  'di',
+  'mi',
+  'do',
+  'fr',
+  'sa',
+]
+
+function slotHasMeal(slot?: WeekSlot | null) {
+  if (!slot) return false
+  return Boolean(
+    slot.recipeId || slot.title || slot.sideRecipeId || slot.sideTitle,
+  )
+}
+
 function WeekCalendarModal({
   activeWeekId,
   weeks,
@@ -328,26 +345,35 @@ function WeekCalendarModal({
           {cells.map((date) => {
             const weekKey = weekIdFromMonday(mondayOf(date))
             const week = weeksById.get(weekKey)
+            const dayId = JS_DAY_TO_WEEKDAY[date.getDay()]
+            const slot = week?.slots.find((s) => s.day === dayId)
             const inMonth = date.getMonth() === cursor.getMonth()
             const isToday = sameDay(date, today)
             const inActiveWeek = weekKey === activeWeekKey
-            const planned =
-              week?.slots.some(
-                (s) => s.recipeId || s.title || s.sideRecipeId || s.sideTitle,
-              ) ?? false
-            const locked = week?.status === 'locked'
+            const hasMeal = slotHasMeal(slot)
+            const weekLocked = week?.status === 'locked'
+            const weekHasAny =
+              week?.slots.some((s) => slotHasMeal(s)) ?? false
+
+            const labelBits = [WEEKDAY_LABELS[dayId], String(date.getDate())]
+            if (hasMeal) labelBits.push(weekLocked ? 'festgelegt' : 'geplant')
+            else if (weekLocked) labelBits.push('Woche festgenagelt')
 
             return (
               <button
                 key={date.toISOString()}
                 type="button"
+                title={labelBits.join(' · ')}
+                aria-label={labelBits.join(', ')}
                 className={[
                   'cal-day',
                   inMonth ? '' : 'outside',
                   isToday ? 'today' : '',
                   inActiveWeek ? 'in-active-week' : '',
-                  planned ? 'has-plan' : '',
-                  locked ? 'locked' : '',
+                  hasMeal ? 'has-meal' : '',
+                  weekLocked ? 'week-locked' : '',
+                  weekLocked && hasMeal ? 'meal-locked' : '',
+                  weekHasAny && !hasMeal ? 'week-has-plan' : '',
                 ]
                   .filter(Boolean)
                   .join(' ')}
@@ -356,16 +382,32 @@ function WeekCalendarModal({
                   onClose()
                 }}
               >
-                <span>{date.getDate()}</span>
-                {planned ? <i className="cal-dot" aria-hidden /> : null}
+                <span className="cal-day-num">{date.getDate()}</span>
+                {hasMeal ? (
+                  <span className="cal-mark" aria-hidden>
+                    {weekLocked ? '✓' : '·'}
+                  </span>
+                ) : weekLocked ? (
+                  <span className="cal-mark faint" aria-hidden>
+                    —
+                  </span>
+                ) : null}
               </button>
             )
           })}
         </div>
 
-        <p className="muted tiny">
-          Punkt = Woche mit Gerichten. Grün markiert = aktuelle Woche.
-        </p>
+        <div className="cal-legend muted tiny">
+          <span>
+            <i className="cal-swatch meal" /> geplant
+          </span>
+          <span>
+            <i className="cal-swatch locked" /> festgelegt ✓
+          </span>
+          <span>
+            <i className="cal-swatch active" /> aktuelle Woche
+          </span>
+        </div>
         <button
           type="button"
           className="btn secondary sm"

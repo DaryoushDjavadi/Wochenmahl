@@ -767,15 +767,31 @@ p {
   border: 1px solid transparent;
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.55);
-  min-height: 44px;
+  min-height: 48px;
   display: grid;
   place-items: center;
-  gap: 2px;
-  padding: 6px 2px 8px;
+  gap: 1px;
+  padding: 6px 2px 6px;
   position: relative;
   font-weight: 600;
   color: var(--ink);
-  transition: background 0.15s ease, border-color 0.15s ease;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.cal-day-num {
+  line-height: 1.1;
+}
+
+.cal-mark {
+  font-size: 0.72rem;
+  line-height: 1;
+  font-weight: 700;
+  color: var(--brand);
+}
+
+.cal-mark.faint {
+  opacity: 0.35;
+  color: var(--muted);
 }
 
 .cal-day.outside {
@@ -784,11 +800,38 @@ p {
 
 .cal-day.today {
   border-color: #2f6f4e88;
+  box-shadow: inset 0 0 0 1px #2f6f4e33;
 }
 
 .cal-day.in-active-week {
-  background: #d9ebe0;
-  border-color: #2f6f4e55;
+  border-color: #2f6f4e66;
+}
+
+.cal-day.has-meal {
+  background: #dcefe3;
+  border-color: #2f6f4e44;
+}
+
+.cal-day.has-meal .cal-mark {
+  color: #1f4d35;
+}
+
+.cal-day.meal-locked {
+  background: #2f6f4e;
+  border-color: #1f4d35;
+  color: #f4faf6;
+}
+
+.cal-day.meal-locked .cal-mark {
+  color: #f0d78c;
+}
+
+.cal-day.week-locked:not(.has-meal) {
+  background: rgba(47, 111, 78, 0.08);
+}
+
+.cal-day.week-has-plan:not(.has-meal):not(.meal-locked) {
+  box-shadow: inset 0 -2px 0 #2f6f4e33;
 }
 
 .cal-day:hover,
@@ -797,17 +840,40 @@ p {
   outline: none;
 }
 
-.cal-day.has-plan .cal-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--brand);
-  display: block;
+.cal-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  align-items: center;
 }
 
-.cal-day.locked.in-active-week,
-.cal-day.locked.has-plan {
-  box-shadow: inset 0 0 0 1px #b85c3844;
+.cal-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cal-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 4px;
+  display: inline-block;
+  border: 1px solid var(--line);
+}
+
+.cal-swatch.meal {
+  background: #dcefe3;
+  border-color: #2f6f4e55;
+}
+
+.cal-swatch.locked {
+  background: #2f6f4e;
+  border-color: #1f4d35;
+}
+
+.cal-swatch.active {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px #2f6f4e88;
 }
 
 .flash {
