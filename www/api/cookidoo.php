@@ -159,11 +159,13 @@ function normalize_search_hits($payload): array {
         return $hits;
     }
     $candidates = [];
-    foreach (['recipeSearchResults', 'recipes', 'items', 'hits', 'content', 'results', 'data'] as $key) {
-        if (isset($payload[$key]) && is_array($payload[$key])) {
-            $candidates = $payload[$key];
-            break;
+    // Prefer the shapes used by cookidoo.de/search/{locale} and the cookidoo-api lib.
+    foreach (['data', 'recipes', 'recipeSearchResults', 'hits', 'items', 'content', 'results'] as $key) {
+        if (!isset($payload[$key]) || !is_array($payload[$key]) || $payload[$key] === []) {
+            continue;
         }
+        $candidates = $payload[$key];
+        break;
     }
     if (!$candidates && is_list_array($payload)) {
         $candidates = $payload;
@@ -178,20 +180,57 @@ function normalize_search_hits($payload): array {
         if (isset($row['recipe']) && is_array($row['recipe'])) {
             $row = $row['recipe'];
         }
-        $id = $row['id'] ?? $row['recipeId'] ?? $row['identifier'] ?? null;
+        $id = $row['id'] ?? $row['recipeId'] ?? $row['objectID'] ?? $row['identifier'] ?? null;
         $title = $row['title'] ?? $row['name'] ?? $row['recipeName'] ?? null;
         if (!is_string($id) || $id === '' || !is_string($title) || $title === '') {
             continue;
         }
         $id = preg_replace('/^recipe-/', '', $id) ?: $id;
+
+        $image = $row['image'] ?? $row['thumbnail'] ?? $row['squareImage'] ?? null;
+        if (!is_string($image) || $image === '') {
+            $assets = $row['descriptiveAssets'] ?? null;
+            if (is_array($assets)) {
+                foreach ($assets as $asset) {
+                    if (!is_array($asset)) {
+                        continue;
+                    }
+                    foreach (['square', 'portrait', 'landscape'] as $variant) {
+                        if (!empty($asset[$variant]) && is_string($asset[$variant])) {
+                            $image = str_replace(
+                                '{transformation}',
+                                't_web_shared_recipe_221x240',
+                                $asset[$variant]
+                            );
+                            break 2;
+                        }
+                    }
+                }
+            }
+        } elseif (is_string($image) && str_contains($image, '{transformation}')) {
+            $image = str_replace('{transformation}', 't_web_shared_recipe_221x240', $image);
+        }
+
+        $totalTime = $row['totalTime'] ?? $row['preparationTime'] ?? null;
+        if (is_numeric($totalTime)) {
+            $mins = (int) round(((float) $totalTime) / 60);
+            $totalTime = $mins > 0 ? $mins . ' Min.' : null;
+        }
+
         $hits[] = [
             'id' => $id,
             'title' => $title,
-            'totalTime' => $row['totalTime'] ?? $row['preparationTime'] ?? null,
-            'image' => $row['image'] ?? $row['thumbnail'] ?? $row['squareImage'] ?? null,
+            'totalTime' => is_string($totalTime) ? $totalTime : null,
+            'image' => is_string($image) ? $image : null,
         ];
     }
     return $hits;
+}
+
+function search_locale(string $lang): string {
+    $part = explode('-', $lang)[0] ?? 'de';
+    $part = strtolower(trim($part));
+    return $part !== '' ? $part : 'de';
 }
 
 /** @return list<array{key:string,value:string,domain:string,path:string}> */
@@ -798,28 +837,29 @@ if ($action === 'importRecipe') {
 }
 
 if ($action === 'search') {
-    $cookies = require_session($input);
+    // Search works with session cookies; the public catalogue endpoint is
+    // https://cookidoo.{tld}/search/{locale}?query=...
+    $cookies = session_cookies_from_input($input);
     $query = trim((string) ($input['query'] ?? ''));
     if ($query === '') {
         respond(400, ['ok' => false, 'message' => 'Suchbegriff fehlt.']);
     }
 
     $q = rawurlencode($query);
+    $locale = search_locale($lang);
     $endpoints = [
-        rtrim($base, '/') . "/eu/gatekeeper/api/v3/search/recipes?query={$q}&size=24&from=0",
-        rtrim($base, '/') . "/explore/{$lang}/api/search?query={$q}&size=24",
-        rtrim($base, '/') . "/community/{$lang}/search/recipes?query={$q}",
-        rtrim($base, '/') . '/foundation/' . rawurlencode($lang) . '/search?query=' . $q,
+        rtrim($base, '/') . "/search/{$locale}?query={$q}&pageSize=24",
+        rtrim($base, '/') . "/search/{$locale}?query={$q}&size=24",
     ];
 
     $tried = [];
     foreach ($endpoints as $url) {
-        $res = api_get(
-            $url,
-            $cookies,
-            'application/json, application/vnd.vorwerk.search.hal+json, application/hal+json',
-        );
-        $tried[] = ['url' => $url, 'status' => $res['status']];
+        $res = api_get($url, $cookies, 'application/json');
+        $tried[] = [
+            'url' => $url,
+            'status' => $res['status'],
+            'keys' => is_array($res['json']) ? array_keys($res['json']) : [],
+        ];
         if (!$res['ok'] || !$res['json']) {
             continue;
         }
@@ -836,9 +876,9 @@ if ($action === 'search') {
 
     respond(200, [
         'ok' => true,
-        'message' => 'Keine Treffer über die API — auf Cookidoo.de suchen und Link/ID importieren.',
+        'message' => 'Keine Treffer — auf Cookidoo suchen und Link/ID hier importieren.',
         'recipes' => [],
-        'hint' => 'Fallback: cookidoo.de öffnen, Rezept kopieren, importieren.',
+        'hint' => 'Fallback: Rezept auf cookidoo.de öffnen, Link kopieren, unter „Link / ID“ einfügen.',
         'searchUrl' => rtrim($base, '/') . '/search?query=' . rawurlencode($query),
         'tried' => $tried,
     ]);
@@ -847,17 +887,22 @@ if ($action === 'search') {
 if ($action === 'lists') {
     $cookies = require_session($input);
     $lists = [];
+    $acceptCustom = 'application/vnd.vorwerk.organize.custom-list.mobile+json, application/json';
+    $acceptManaged = 'application/vnd.vorwerk.organize.managed-list.mobile+json, application/json';
     foreach ([
-        rtrim($base, '/') . "/organize/{$lang}/api/custom-list",
-        rtrim($base, '/') . "/organize/{$lang}/api/favorite",
-    ] as $url) {
-        $res = api_get($url, $cookies, 'application/json');
+        [rtrim($base, '/') . "/organize/{$lang}/api/custom-list", $acceptCustom],
+        [rtrim($base, '/') . "/organize/{$lang}/api/favorite", $acceptCustom],
+        [rtrim($base, '/') . "/organize/{$lang}/api/managed-list", $acceptManaged],
+    ] as [$url, $accept]) {
+        $res = api_get($url, $cookies, $accept);
         if (!$res['ok'] || !is_array($res['json'])) {
             continue;
         }
         $raw = $res['json']['customLists']
+            ?? $res['json']['managedLists']
             ?? $res['json']['lists']
             ?? $res['json']['favorites']
+            ?? $res['json']['data']
             ?? $res['json'];
         if (!is_array($raw)) {
             continue;
