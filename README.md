@@ -1,20 +1,21 @@
-# Wochenkochen
+# Wochenkochen / Wochenmahl
 
-Mobile-first weekly meal planner for **Daryoush & Wendi**.
+Mobile-first Wochenplaner für **Daryoush & Wendi**.
 
-Pitch dishes → vote → lock the week → then consciously send ingredients to **Bring!**. Optional **Cookidoo** login to import recipes.
+Ablauf: Gerichte **pitchen** → **planen** → **Woche festnageln** → Einkaufsliste bearbeiten → optional an **Bring!** senden. Optional **Cookidoo** verknüpfen, suchen und Rezepte importieren.
+
+- **GitHub:** https://github.com/DaryoushDjavadi/Wochenmahl (`main`)
+- **Live:** https://media-acht.de/Wochenessen/
 
 ---
 
-## Download & upload to your website
+## Webspace hochladen
 
-**Branch:** `cursor/wochenkochen-web-demo-c171`
+Fertige Site liegt in `www/` (kein `dist/`).
 
-### Option A — only the finished site (recommended)
-
-1. Download / clone this branch from GitHub  
-2. Open folder: `wochenkochen/www/`  
-3. Upload **all contents** of `www/` to your webspace (FTP / file manager):
+1. `npm run build` (oder fertigen Stand von `main` nehmen)
+2. **Inhalt** von `www/` nach `…/Wochenessen/` hochladen (SFTP/FTP)
+3. SQLite-Datei `api/data/wochenmahl.sqlite` **nicht überschreiben/löschen**
 
 ```
 index.html
@@ -24,81 +25,96 @@ api/bring.php
 api/cookidoo.php
 api/store.php
 api/data/.htaccess
+api/data/.gitignore
 ```
 
-4. Open the URL where `index.html` lives  
-
-**Requirements:** PHP + curl + **PDO_SQLite** on the host (Bring / Cookidoo / shared DB).  
-The SQLite file is created automatically at `api/data/wochenmahl.sqlite` (not downloadable thanks to `.htaccess`).  
-There is **no `dist` folder** — `www/` is the uploadable build.
-
-### Option B — full source
-
-```bash
-git clone -b cursor/wochenkochen-web-demo-c171 <your-repo-url>
-cd Sphere_Visualization/wochenkochen
-npm install
-npm run build   # refreshes www/
-```
+**Host-Voraussetzungen:** PHP mit **curl** und **PDO_SQLite**.  
+Die DB wird automatisch unter `api/data/wochenmahl.sqlite` angelegt (Zugriff per `.htaccess` blockiert).
 
 ---
 
-## How the app works
+## So funktioniert die App
 
-| Step | What |
-|------|------|
-| 1 | Login as **Daryoush** or **Wendi** |
-| 2 | **Pitch** ideas (Yes / Maybe / Nope). Bases like *Reis* can get different sides. |
-| 3 | **Plan** — assign meals to days (base → then side if needed) |
-| 4 | **Woche festnageln** — plan freezes |
-| 5 | Only then: load shopping list / **Jetzt an Bring senden** |
+| Schritt | Was |
+|--------|-----|
+| 1 | Als **Daryoush** oder **Wendi** einloggen |
+| 2 | **Pitch** — Ideen vorschlagen, mit Ja / Vielleicht / Nee reagieren. Basis (z. B. Reis) + Beilage möglich |
+| 3 | **Plan** — Tage befüllen; Tag antippen → Zutaten & Details |
+| 4 | **Woche festnageln** — Plan steht |
+| 5 | Einkaufsliste laden/bearbeiten → optional **an Bring senden** |
 
-Top-left **Menü**: Einstellungen · Hilfe · Abmelden  
+**Oben:** Home (zurück zum Plan) · Menü (Einstellungen / Hilfe / Abmelden) · User-Chip  
+**Kalender** im Wochenkopf: andere Woche wählen (geplant / festgelegt)  
+**Unten:** Plan · Pitch · Rezepte — Tab **Bring** nur wenn Bring in den Einstellungen an ist
 
-Bottom nav: Plan · Pitch · Rezepte — **Bring** tab only if Bring is enabled in Settings.
+### Rezepte
 
-### Recipes
-
-- Types: **Gericht** · **Basis** (e.g. rice) · **Beilage**  
-- Seed examples included for testing (rice, noodles, sides, pasta, tacos, …)  
-- Add new recipes anytime under Rezepte → Neu  
+- Typen: **Gericht** · **Basis** · **Beilage**
+- Neu anlegen, **Anpassen**, **Duplizieren**
+- Demo-Rezepte sind enthalten (u. a. Kokos-Kichererbsen-Curry mit korrektem Cookidoo-Link)
 
 ### Cookidoo (optional)
 
-1. Menü → Einstellungen → enable Cookidoo  
-2. Enter e-mail + password + country → link account  
-3. Rezepte → Cookidoo import → paste link/ID → **Vom Konto laden**  
-4. Or save title + ingredients manually if auto-login fails  
+1. Menü → Einstellungen → Cookidoo an
+2. E-Mail, Passwort, Land (meist **DE**) → verknüpfen  
+   Login läuft über den Browser-**OAuth2**-Cookie-Flow (`api/cookidoo.php`)
+3. Rezepte → **Cookidoo stöbern**:
+   - **Suche** im Katalog
+   - **Meine Listen** (Konto)
+   - **Link / ID** einfügen und importieren
+
+Bei Captcha/2FA kann der Auto-Login scheitern — dann weiter per Link/ID.
 
 ### Bring! (optional)
 
-1. Menü → Einstellungen → enable Bring  
-2. Enter e-mail + password → link → choose list  
-3. After the week is **locked**: Einkaufsliste → load from plan → **Jetzt an Bring senden**  
+1. Einstellungen → Bring an → Login → Liste wählen
+2. Erst **nach** „Woche festnageln“: Einkaufsliste → bearbeiten → **Jetzt an Bring senden**
 
-Nothing is sent to Bring during the pitch phase.
+Während der Pitch-Phase wird nichts an Bring geschickt.
+
+### Gemeinsamer Speicher
+
+Auf dem PHP-Webspace teilen Daryoush & Wendi Rezepte, Pitches, Wochenplan und Einstellungen über **SQLite** (`api/store.php`).  
+Wer eingeloggt ist, bleibt **gerätelokal**. Ohne PHP (nur Vite) läuft alles im Browser-`localStorage`.
 
 ---
 
-## Local development
+## Lokal entwickeln
 
 ```bash
 cd wochenkochen
 npm install
-npm run dev
+npm run dev          # http://localhost:5173
+npm run build        # schreibt www/
 ```
 
-```bash
-npm run build          # write www/
-node scripts/logic-check.mjs
-```
+Für Bring/Cookidoo/Sync lokal brauchst du PHP (oder den Webspace).
 
 ---
 
-## Notes
+## Technik
 
-- On a PHP host, household data (recipes, pitches, week plan, settings) syncs via **SQLite** (`api/store.php` → `api/data/wochenmahl.sqlite`) so Daryoush & Wendi share one stand  
-- Browser `localStorage` is still used as cache / offline fallback; “who is logged in” stays device-local  
-- Local Vite without PHP = browser-only (see Settings → Gemeinsamer Speicher)  
-- Passwords are not persisted — only session tokens after a successful link (those tokens are part of shared settings once linked)  
-- Bring / Cookidoo use unofficial APIs via PHP proxies; Cookidoo password-grant may stop working if Vorwerk changes auth
+| Teil | Details |
+|------|---------|
+| Frontend | Vite + React + Zustand (`www/` Build) |
+| Sync | `api/store.php` + SQLite |
+| Bring | `api/bring.php` |
+| Cookidoo | `api/cookidoo.php` (OAuth2-Session-Cookies, Suche unter `/search/{locale}`) |
+
+**Hinweise**
+
+- Passwörter werden nicht dauerhaft gespeichert — nach erfolgreichem Link nur Session-Tokens/Cookies in den Settings
+- Bring und Cookidoo nutzen inoffizielle APIs; Vorwerk/Bring können Auth oder Endpunkte ändern
+- Mobile Layout: schmale Displays kürzen Topbar/Texte, damit Home, Menü und Kalender nicht überlappen
+
+---
+
+## Aktueller Stand
+
+Branch **`main`** ist der Upload-/Deploy-Stand. Nach Änderungen:
+
+```bash
+npm run build
+git add -A && git commit && git push origin main
+# www/* → nur Ordner Wochenessen auf dem Webspace
+```
