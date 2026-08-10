@@ -25,7 +25,6 @@ async function main() {
   const log = []
 
   // --- Scenario 1: Daryoush ---
-  await page.getByRole('button', { name: /Daryoush/i }).click()
   await page.goto(base, { waitUntil: 'networkidle' })
   await shot(page, '01-login')
   await page.locator('.user-pick button').first().click()
@@ -42,30 +41,34 @@ async function main() {
   await page.getByRole('button', { name: 'Woche festnageln' }).click()
   await page.getByText('Festgelegt').waitFor()
   await shot(page, '03-darius-locked-week')
-  log.push('Scenario 1 PASS: Darius pitch → plan → lock')
+  log.push('Scenario 1 PASS: Daryoush pitch → plan → lock')
 
-  // --- Scenario 2: Wendy ---
+  // --- Scenario 2: Wendi ---
   await page.locator('.user-chip').click()
   await page.locator('.user-pick button').nth(1).click()
   await page.getByRole('button', { name: 'Menü' }).click()
   await page.getByRole('menuitem', { name: /Einstellungen/i }).click()
   await page.getByRole('button', { name: 'Bring umschalten' }).click()
-  await page.locator('#bring-email').fill('wendy@example.com')
+  await page.locator('#bring-email').fill('wendi@example.com')
   await page.locator('#bring-password').fill('demo-password')
   // Link button needs PHP host — UI presence is enough here
   await page.getByRole('button', { name: /Bring-Konto verknüpfen|Erneut einloggen/i }).waitFor()
   await page.getByRole('button', { name: 'Cookidoo umschalten' }).click()
-  await page.locator('#cook-email').fill('wendy@example.com')
+  await page.locator('#cook-email').fill('wendi@example.com')
   await page.locator('#cook-password').fill('demo-password')
   await page.getByRole('button', { name: /Cookidoo-Konto verknüpfen|Erneut einloggen/i }).waitFor()
   await shot(page, '04-wendy-settings')
 
   await page.locator('.bottom-nav button', { hasText: 'Rezepte' }).click()
-  await page.getByRole('button', { name: 'Cookidoo import' }).click()
-  await page.locator('#c-url-manual, #c-url').first().fill('https://cookidoo.de/recipes/recipe/de-DE/demo123')
-  await page.locator('#c-title').fill('TM Tomatensuppe')
-  await page.locator('#c-ing').fill('500g Tomaten\n1 Zwiebel\n200ml Sahne')
-  await page.getByRole('button', { name: /Manuell speichern|Importieren/i }).click()
+  await page.getByRole('button', { name: /Cookidoo stöbern/i }).click()
+  await page.getByRole('button', { name: /Link \/ ID/i }).click()
+  await page.locator('#cook-browse-ref').fill('https://cookidoo.de/recipes/recipe/de-DE/demo123')
+  // Without linked account import may fail — close and create recipe manually if needed
+  await page.getByRole('button', { name: 'Schließen' }).click()
+  await page.getByRole('button', { name: 'Neu' }).click()
+  await page.locator('#r-title').fill('TM Tomatensuppe')
+  await page.locator('#r-ing').fill('500g Tomaten\n1 Zwiebel\n200ml Sahne')
+  await page.getByRole('button', { name: /Speichern|Änderungen speichern/i }).click()
   await page.getByText('TM Tomatensuppe').waitFor()
   await shot(page, '05-wendy-cookidoo-import')
 
@@ -83,7 +86,7 @@ async function main() {
   await page.getByRole('button', { name: /Liste aus Plan laden|Aus Plan bauen/i }).click()
   await page.locator('.flash').waitFor()
   await shot(page, '06-wendy-bring-push')
-  log.push('Scenario 2 PASS: Wendy settings + lock week then shopping impulse')
+  log.push('Scenario 2 PASS: Wendi settings + lock week then shopping impulse')
 
   console.log(log.join('\n'))
   await browser.close()
