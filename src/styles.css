@@ -1257,10 +1257,36 @@ p {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 12px;
+  padding: 8px 10px;
   border-radius: 14px;
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.55);
+  min-width: 0;
+}
+
+.cookidoo-result .grow {
+  min-width: 0;
+}
+
+.cookidoo-result strong {
+  display: block;
+  overflow-wrap: anywhere;
+  line-height: 1.25;
+}
+
+.cookidoo-thumb {
+  flex-shrink: 0;
+  width: 64px;
+  height: 64px;
+  border-radius: 12px;
+  object-fit: cover;
+  background: rgba(24, 36, 29, 0.06);
+  border: 1px solid var(--line);
+}
+
+.cookidoo-thumb-empty {
+  background:
+    linear-gradient(145deg, rgba(231, 240, 234, 0.9), rgba(246, 227, 194, 0.55));
 }
 
 .modal-backdrop {

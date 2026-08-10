@@ -704,6 +704,19 @@ function CookidooBrowseModal({
           <div className="cookidoo-results">
             {recipes.map((r) => (
               <div key={r.id} className="cookidoo-result">
+                {r.image ? (
+                  <img
+                    className="cookidoo-thumb"
+                    src={r.image}
+                    alt=""
+                    loading="lazy"
+                    decoding="async"
+                    width={64}
+                    height={64}
+                  />
+                ) : (
+                  <div className="cookidoo-thumb cookidoo-thumb-empty" aria-hidden />
+                )}
                 <div className="grow">
                   <strong>{r.title}</strong>
                   <p className="muted tiny">
