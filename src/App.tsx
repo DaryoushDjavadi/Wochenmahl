@@ -152,11 +152,13 @@ function MealDetailModal({
   slot,
   recipes,
   onClose,
+  onClear,
 }: {
   day: Weekday
   slot: WeekSlot
   recipes: Recipe[]
   onClose: () => void
+  onClear?: () => void
 }) {
   const main = recipes.find((r) => r.id === slot.recipeId)
   const side = recipes.find((r) => r.id === slot.sideRecipeId)
@@ -200,6 +202,19 @@ function MealDetailModal({
 
         {!main && !side && !slot.title && !sideTitle ? (
           <p className="muted">Für diesen Tag liegt noch kein Rezept vor.</p>
+        ) : null}
+
+        {onClear ? (
+          <button
+            type="button"
+            className="btn secondary"
+            onClick={() => {
+              onClear()
+              onClose()
+            }}
+          >
+            Gericht vom Tag löschen
+          </button>
         ) : null}
       </div>
     </div>
@@ -394,18 +409,18 @@ function CookidooBrowseModal({
   const [manualRef, setManualRef] = useState('')
   const [fallbackUrl, setFallbackUrl] = useState<string | null>(null)
 
-  const token = settings.cookidoo.accessToken
+  const cookies = settings.cookidoo.cookies
   const country = settings.cookidoo.country || 'de'
-  const linked = settings.cookidoo.linked && Boolean(token)
+  const linked = settings.cookidoo.linked && Boolean(cookies)
 
   const runSearch = async () => {
-    if (!linked || !token || !query.trim()) return
+    if (!linked || !cookies || !query.trim()) return
     setBusy(true)
     setFlash(null)
     setActiveListTitle(null)
     try {
       const res = await searchCookidooRecipes({
-        accessToken: token,
+        cookies,
         query: query.trim(),
         country,
       })
@@ -421,12 +436,12 @@ function CookidooBrowseModal({
   }
 
   const loadLists = async () => {
-    if (!linked || !token) return
+    if (!linked || !cookies) return
     setBusy(true)
     setFlash(null)
     try {
       const res = await listCookidooCollections({
-        accessToken: token,
+        cookies,
         country,
       })
       setLists(res.lists ?? [])
@@ -440,13 +455,13 @@ function CookidooBrowseModal({
   }
 
   const openList = async (listId: string, title: string) => {
-    if (!linked || !token) return
+    if (!linked || !cookies) return
     setBusy(true)
     setFlash(null)
     setActiveListTitle(title)
     try {
       const res = await listCookidooCollectionRecipes({
-        accessToken: token,
+        cookies,
         listId,
         country,
       })
@@ -899,7 +914,6 @@ function WeekView({
       ).length ?? 0,
     [week],
   )
-  const locked = week?.status === 'locked'
   const detailSlot = useMemo(
     () => week?.slots.find((s) => s.day === detailDay) ?? null,
     [week, detailDay],
@@ -1017,7 +1031,7 @@ function WeekView({
                 <strong className={`grow day-title ${WEEKDAY_COLOR_CLASS[slot.day]}`}>
                   {WEEKDAY_LABELS[slot.day]}
                 </strong>
-                {hasMeal && !locked ? (
+                {hasMeal ? (
                   <button
                     type="button"
                     className="btn ghost sm"
@@ -1026,7 +1040,7 @@ function WeekView({
                       clearSlot(slot.day)
                     }}
                   >
-                    Leeren
+                    Löschen
                   </button>
                 ) : null}
               </div>
@@ -1050,8 +1064,6 @@ function WeekView({
                     ))}
                   </div>
                 </>
-              ) : locked ? (
-                <p className="muted tiny">Leer — Plan ist festgenagelt.</p>
               ) : (
                 <button
                   type="button"
@@ -1076,6 +1088,7 @@ function WeekView({
           slot={detailSlot}
           recipes={recipes}
           onClose={() => setDetailDay(null)}
+          onClear={() => clearSlot(detailDay)}
         />
       ) : null}
 
@@ -2147,7 +2160,7 @@ function SettingsView() {
               updateCookidoo({
                 enabled: !settings.cookidoo.enabled,
                 ...(settings.cookidoo.enabled
-                  ? { linked: false, accessToken: '', refreshToken: '' }
+                  ? { linked: false, accessToken: '', refreshToken: '', cookies: '' }
                   : {}),
               })
             }

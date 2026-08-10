@@ -320,6 +320,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     country: 'de',
     accessToken: '',
     refreshToken: '',
+    cookies: '',
     language: 'de-DE',
     suggestions: [],
   },

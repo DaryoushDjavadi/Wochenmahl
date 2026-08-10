@@ -96,8 +96,11 @@ export interface CookidooSettings {
   linked: boolean
   email: string
   country: string
+  /** Legacy bearer token — unused after OAuth2 cookie login */
   accessToken: string
   refreshToken: string
+  /** Serialized Cookidoo session cookies (OAuth2 proxy) */
+  cookies: string
   language: string
   lastImportUrl?: string
   lastError?: string

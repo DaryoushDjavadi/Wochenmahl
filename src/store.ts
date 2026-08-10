@@ -281,7 +281,7 @@ export const useStore = create<Store>()(
 
         assignSlot: (day, payload) => {
           const week = activeWeek(get)
-          if (!week || week.status === 'locked') return
+          if (!week) return
           const recipes = get().recipes
           const mainFromRecipe = payload.recipeId
             ? recipes.find((r) => r.id === payload.recipeId)?.title
@@ -314,12 +314,14 @@ export const useStore = create<Store>()(
                 ),
               }
             }),
+            shoppingDraft:
+              week.status === 'locked' ? [] : get().shoppingDraft,
           })
         },
 
         clearSlot: (day) => {
           const week = activeWeek(get)
-          if (!week || week.status === 'locked') return
+          if (!week) return
           set({
             weeks: get().weeks.map((w) => {
               if (w.id !== get().activeWeekId) return w
@@ -328,6 +330,9 @@ export const useStore = create<Store>()(
                 slots: w.slots.map((s) => (s.day === day ? { day } : s)),
               }
             }),
+            // Einkaufsliste neu laden, falls der Plan schon festgenagelt war
+            shoppingDraft:
+              week.status === 'locked' ? [] : get().shoppingDraft,
           })
         },
 
@@ -619,14 +624,23 @@ export const useStore = create<Store>()(
         linkCookidoo: async (email, password, country = 'de') => {
           try {
             const res = await linkCookidooAccount(email, password, country)
-            if (!res.ok || !res.accessToken) {
+            const cookiesJson =
+              res.cookies && res.cookies.length
+                ? JSON.stringify(res.cookies)
+                : ''
+            if (!res.ok || !cookiesJson) {
               get().updateCookidoo({
                 linked: false,
-                lastError: res.message || 'Cookidoo-Login fehlgeschlagen',
+                cookies: '',
+                lastError:
+                  [res.message, res.hint].filter(Boolean).join(' — ') ||
+                  'Cookidoo-Login fehlgeschlagen',
               })
               return {
                 ok: false,
-                message: res.message || 'Cookidoo-Login fehlgeschlagen',
+                message:
+                  [res.message, res.hint].filter(Boolean).join(' — ') ||
+                  'Cookidoo-Login fehlgeschlagen',
               }
             }
             get().updateCookidoo({
@@ -635,8 +649,9 @@ export const useStore = create<Store>()(
               email,
               country: res.country || country,
               language: res.language || 'de-DE',
-              accessToken: res.accessToken,
+              accessToken: res.accessToken || '',
               refreshToken: res.refreshToken || '',
+              cookies: cookiesJson,
               suggestions: res.suggestions || [],
               lastError: undefined,
             })
@@ -646,7 +661,7 @@ export const useStore = create<Store>()(
               err instanceof Error
                 ? err.message
                 : 'Cookidoo-Verbindung fehlgeschlagen'
-            get().updateCookidoo({ linked: false, lastError: message })
+            get().updateCookidoo({ linked: false, cookies: '', lastError: message })
             return { ok: false, message }
           }
         },
@@ -656,13 +671,14 @@ export const useStore = create<Store>()(
             linked: false,
             accessToken: '',
             refreshToken: '',
+            cookies: '',
             suggestions: [],
             lastError: undefined,
           }),
 
         importFromCookidooAccount: async (recipeRef) => {
           const { settings, addImportedRecipe } = get()
-          if (!settings.cookidoo.linked || !settings.cookidoo.accessToken) {
+          if (!settings.cookidoo.linked || !settings.cookidoo.cookies) {
             return {
               ok: false,
               message: 'Cookidoo zuerst mit Login verknüpfen.',
@@ -670,7 +686,7 @@ export const useStore = create<Store>()(
           }
           try {
             const res = await importCookidooRecipeApi({
-              accessToken: settings.cookidoo.accessToken,
+              cookies: settings.cookidoo.cookies,
               recipe: recipeRef,
               country: settings.cookidoo.country || 'de',
             })

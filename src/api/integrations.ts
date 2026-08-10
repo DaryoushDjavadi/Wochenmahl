@@ -25,6 +25,7 @@ export type CookidooLoginResult = {
   hint?: string
   accessToken?: string
   refreshToken?: string
+  cookies?: { key: string; value: string; domain: string; path: string }[]
   country?: string
   language?: string
   suggestions?: { title: string; id?: string | null }[]
@@ -94,13 +95,15 @@ export function linkCookidooAccount(
 }
 
 export function importCookidooRecipeApi(input: {
-  accessToken: string
+  accessToken?: string
+  cookies?: string
   recipe: string
   country?: string
 }) {
   return postJson<CookidooImportResult>('cookidoo.php', {
     action: 'importRecipe',
     accessToken: input.accessToken,
+    cookies: input.cookies,
     recipe: input.recipe,
     country: input.country ?? 'de',
   })
@@ -134,37 +137,43 @@ export type CookidooListRecipesResult = {
 }
 
 export function searchCookidooRecipes(input: {
-  accessToken: string
+  accessToken?: string
+  cookies?: string
   query: string
   country?: string
 }) {
   return postJson<CookidooSearchResult>('cookidoo.php', {
     action: 'search',
     accessToken: input.accessToken,
+    cookies: input.cookies,
     query: input.query,
     country: input.country ?? 'de',
   })
 }
 
 export function listCookidooCollections(input: {
-  accessToken: string
+  accessToken?: string
+  cookies?: string
   country?: string
 }) {
   return postJson<CookidooListsResult>('cookidoo.php', {
     action: 'lists',
     accessToken: input.accessToken,
+    cookies: input.cookies,
     country: input.country ?? 'de',
   })
 }
 
 export function listCookidooCollectionRecipes(input: {
-  accessToken: string
+  accessToken?: string
+  cookies?: string
   listId: string
   country?: string
 }) {
   return postJson<CookidooListRecipesResult>('cookidoo.php', {
     action: 'listRecipes',
     accessToken: input.accessToken,
+    cookies: input.cookies,
     listId: input.listId,
     country: input.country ?? 'de',
   })
