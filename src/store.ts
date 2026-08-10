@@ -352,6 +352,7 @@ export const useStore = create<Store>()(
               if (w.id !== get().activeWeekId) return w
               return {
                 ...w,
+                bringSentAt: undefined,
                 slots: w.slots.map((s) =>
                   s.day === day
                     ? {
@@ -379,6 +380,7 @@ export const useStore = create<Store>()(
               if (w.id !== get().activeWeekId) return w
               return {
                 ...w,
+                bringSentAt: undefined,
                 slots: w.slots.map((s) => (s.day === day ? { day } : s)),
               }
             }),
@@ -397,7 +399,9 @@ export const useStore = create<Store>()(
           if (!hasMeal) return
           set({
             weeks: get().weeks.map((w) =>
-              w.id === get().activeWeekId ? { ...w, status: 'locked' } : w,
+              w.id === get().activeWeekId
+                ? { ...w, status: 'locked', bringSentAt: undefined }
+                : w,
             ),
           })
         },
@@ -405,7 +409,9 @@ export const useStore = create<Store>()(
         reopenWeek: () => {
           set({
             weeks: get().weeks.map((w) =>
-              w.id === get().activeWeekId ? { ...w, status: 'pitching' } : w,
+              w.id === get().activeWeekId
+                ? { ...w, status: 'pitching', bringSentAt: undefined }
+                : w,
             ),
             shoppingDraft: [],
           })
@@ -664,6 +670,16 @@ export const useStore = create<Store>()(
               lastPushItems: lines,
               lastError: res.ok ? undefined : res.message,
             })
+            if (res.ok) {
+              const sentAt = new Date().toISOString()
+              set({
+                weeks: get().weeks.map((w) =>
+                  w.id === get().activeWeekId
+                    ? { ...w, bringSentAt: sentAt }
+                    : w,
+                ),
+              })
+            }
             return { ok: res.ok, message: res.message, items: lines }
           } catch (err) {
             const message =

@@ -910,6 +910,88 @@ p {
   border-color: rgba(184, 228, 255, 0.75);
 }
 
+.phase-badge-sent {
+  background: linear-gradient(180deg, #d6efff, var(--phase-shop));
+  color: #1a4f75;
+}
+
+.week-toolbar.active-sent {
+  background:
+    linear-gradient(160deg, rgba(158, 235, 217, 0.35), transparent 48%),
+    linear-gradient(200deg, rgba(184, 228, 255, 0.35), transparent 55%),
+    var(--panel);
+  border-color: rgba(0, 207, 204, 0.45);
+}
+
+.week-toolbar.active-sent .week-action-primary {
+  background: linear-gradient(180deg, #c9f7eb, var(--phase-plan));
+  color: #0b4f4c;
+  border-color: rgba(0, 207, 204, 0.35);
+}
+
+.tag-bring {
+  background: linear-gradient(180deg, #d6efff, var(--phase-shop));
+  color: #1a4f75;
+  border-color: rgba(56, 152, 214, 0.4);
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+
+.bring-sent-banner {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(180deg, #d6efff, var(--phase-shop));
+  color: #1a4f75;
+  font-weight: 700;
+  font-size: 0.88rem;
+  border: 1px solid rgba(56, 152, 214, 0.4);
+  box-shadow: var(--shadow-1);
+}
+
+.day-card.bring-sent,
+.recipe-card.bring-sent,
+.shop-row.bring-sent {
+  border-color: rgba(56, 152, 214, 0.45);
+  background:
+    linear-gradient(160deg, rgba(184, 228, 255, 0.28), transparent 60%),
+    var(--panel);
+}
+
+.ingredient-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ingredient-list li.on-bring {
+  border-color: rgba(56, 152, 214, 0.35);
+  background:
+    linear-gradient(160deg, rgba(184, 228, 255, 0.22), transparent 70%),
+    var(--panel);
+}
+
+.shop-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.shop-row-tag {
+  flex-shrink: 0;
+}
+
+.status-pill.bring {
+  background: linear-gradient(180deg, #d6efff, var(--phase-shop));
+  color: #1a4f75;
+  border-color: rgba(56, 152, 214, 0.4);
+}
+
 .week-cal-btn {
   flex-shrink: 0;
   width: 42px;
@@ -1488,7 +1570,7 @@ p {
 
 .shop-row {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr auto auto;
   gap: 8px;
   align-items: center;
   padding: 10px 14px;

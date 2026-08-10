@@ -67,6 +67,8 @@ export interface WeekPlan {
   status: 'pitching' | 'locked'
   slots: WeekSlot[]
   createdAt: string
+  /** Set when ingredients for this locked week were successfully pushed to Bring */
+  bringSentAt?: string
 }
 
 export interface BringListOption {

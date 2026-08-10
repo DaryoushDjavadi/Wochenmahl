@@ -85,15 +85,24 @@ function Avatar({ userId, size = 28 }: { userId: UserId; size?: number }) {
   )
 }
 
-function IngredientList({ items }: { items: Ingredient[] }) {
+function IngredientList({
+  items,
+  onBring = false,
+}: {
+  items: Ingredient[]
+  onBring?: boolean
+}) {
   if (items.length === 0) {
     return <p className="muted tiny">Keine Zutaten hinterlegt.</p>
   }
   return (
     <ul className="ingredient-list">
       {items.map((item, i) => (
-        <li key={`${item.name}-${i}`}>
-          <span>{item.name}</span>
+        <li key={`${item.name}-${i}`} className={onBring ? 'on-bring' : undefined}>
+          <span className="ingredient-main">
+            <span>{item.name}</span>
+            {onBring ? <span className="tag tag-bring">Auf Bring</span> : null}
+          </span>
           {item.amount ? <strong>{item.amount}</strong> : null}
         </li>
       ))}
@@ -105,17 +114,19 @@ function RecipeDetailBlock({
   recipe,
   fallbackTitle,
   role,
+  onBring = false,
 }: {
   recipe?: Recipe
   fallbackTitle?: string
   role?: string
+  onBring?: boolean
 }) {
   const title = recipe?.title || fallbackTitle
   if (!title) return null
   const kind = recipe?.kind ?? 'meal'
 
   return (
-    <section className="recipe-detail">
+    <section className={`recipe-detail ${onBring ? 'on-bring' : ''}`}>
       <div className="row">
         <div className="grow">
           {role ? <p className="muted tiny">{role}</p> : null}
@@ -132,6 +143,7 @@ function RecipeDetailBlock({
         {recipe ? <Avatar userId={recipe.createdBy} /> : null}
       </div>
       <div className="tags">
+        {onBring ? <span className="tag tag-bring">Auf Bring</span> : null}
         {kind === 'base' ? <span className="tag green">Basis</span> : null}
         {kind === 'side' ? <span className="tag">Beilage</span> : null}
         {recipe?.tags.map((t) => (
@@ -144,7 +156,9 @@ function RecipeDetailBlock({
         ) : null}
       </div>
       {recipe?.notes ? <p className="muted">{recipe.notes}</p> : null}
-      {recipe ? <IngredientList items={recipe.ingredients} /> : null}
+      {recipe ? (
+        <IngredientList items={recipe.ingredients} onBring={onBring} />
+      ) : null}
       {recipe?.cookidooUrl ? (
         <a
           className="tiny"
@@ -163,12 +177,14 @@ function MealDetailModal({
   day,
   slot,
   recipes,
+  onBring = false,
   onClose,
   onClear,
 }: {
   day: Weekday
   slot: WeekSlot
   recipes: Recipe[]
+  onBring?: boolean
   onClose: () => void
   onClear?: () => void
 }) {
@@ -198,10 +214,18 @@ function MealDetailModal({
           </button>
         </div>
 
+        {onBring ? (
+          <div className="bring-sent-banner" role="status">
+            <ShoppingCart size={16} aria-hidden />
+            Zutaten dieser Woche sind schon auf der Bring-Liste
+          </div>
+        ) : null}
+
         <RecipeDetailBlock
           recipe={main}
           fallbackTitle={slot.title || headline}
           role={sideTitle ? 'Haupt / Basis' : undefined}
+          onBring={onBring}
         />
 
         {sideTitle ? (
@@ -209,6 +233,7 @@ function MealDetailModal({
             recipe={side}
             fallbackTitle={sideTitle}
             role="Beilage"
+            onBring={onBring}
           />
         ) : null}
 
@@ -1028,8 +1053,19 @@ function WeekView({
     : plannedCount > 0
       ? 'current'
       : 'next'
-  const phaseShop = pitching ? 'idle' : 'current'
-  const activePhase = !pitching ? 'shop' : plannedCount === 0 ? 'plan' : 'lock'
+  const phaseShop = pitching
+    ? 'idle'
+    : week.bringSentAt
+      ? 'done'
+      : 'current'
+  const activePhase = pitching
+    ? plannedCount === 0
+      ? 'plan'
+      : 'lock'
+    : week.bringSentAt
+      ? 'sent'
+      : 'shop'
+  const bringSent = Boolean(week.bringSentAt)
 
   return (
     <div className="stack">
@@ -1043,12 +1079,15 @@ function WeekView({
                 {activePhase === 'plan' && 'Planen'}
                 {activePhase === 'lock' && 'Festnageln'}
                 {activePhase === 'shop' && 'Einkaufen'}
+                {activePhase === 'sent' && 'Auf Bring'}
               </span>
               {pitching
                 ? plannedCount === 0
                   ? 'Tag tippen und Gericht wählen'
                   : `${plannedCount}/7 geplant — dann festnageln`
-                : `${plannedCount} Tage festgelegt`}
+                : bringSent
+                  ? `Zutaten an Bring gesendet · ${plannedCount} Tage`
+                  : `${plannedCount} Tage festgelegt`}
             </p>
           </div>
           <button
@@ -1076,13 +1115,17 @@ function WeekView({
           </li>
           <li className={`week-step step-shop ${phaseShop}`}>
             <span className="week-step-icon" aria-hidden>
-              {phaseShop === 'current' ? (
+              {phaseShop === 'done' ? (
+                <Check size={16} />
+              ) : phaseShop === 'current' ? (
                 <ShoppingBasket size={16} />
               ) : (
                 <Lock size={16} />
               )}
             </span>
-            <span className="week-step-label">Einkaufen</span>
+            <span className="week-step-label">
+              {phaseShop === 'done' ? 'Auf Bring' : 'Einkaufen'}
+            </span>
           </li>
         </ol>
 
@@ -1141,7 +1184,9 @@ function WeekView({
           return (
             <div
               key={slot.day}
-              className={`day-card ${hasMeal ? 'clickable' : 'empty'}`}
+              className={`day-card ${hasMeal ? 'clickable' : 'empty'}${
+                hasMeal && bringSent ? ' bring-sent' : ''
+              }`}
               role={hasMeal ? 'button' : undefined}
               tabIndex={hasMeal ? 0 : undefined}
               onClick={hasMeal ? () => setDetailDay(slot.day) : undefined}
@@ -1160,6 +1205,9 @@ function WeekView({
                 <strong className={`grow day-title ${WEEKDAY_COLOR_CLASS[slot.day]}`}>
                   {WEEKDAY_LABELS[slot.day]}
                 </strong>
+                {hasMeal && bringSent ? (
+                  <span className="tag tag-bring">Auf Bring</span>
+                ) : null}
                 {hasMeal ? (
                   <button
                     type="button"
@@ -1177,6 +1225,9 @@ function WeekView({
                 <>
                   <h3>{title}</h3>
                   <div className="tags">
+                    {bringSent ? (
+                      <span className="tag tag-bring">Bestellt</span>
+                    ) : null}
                     {recipe?.kind === 'base' ? (
                       <span className="tag green">Basis</span>
                     ) : null}
@@ -1211,6 +1262,7 @@ function WeekView({
           day={detailDay}
           slot={detailSlot}
           recipes={recipes}
+          onBring={bringSent}
           onClose={() => setDetailDay(null)}
           onClear={() => clearSlot(detailDay)}
         />
@@ -1555,6 +1607,8 @@ function PitchView() {
 function RecipesView() {
   const recipes = useStore((s) => s.recipes)
   const settings = useStore((s) => s.settings)
+  const weeks = useStore((s) => s.weeks)
+  const activeWeekId = useStore((s) => s.activeWeekId)
   const addRecipe = useStore((s) => s.addRecipe)
   const updateRecipe = useStore((s) => s.updateRecipe)
   const duplicateRecipe = useStore((s) => s.duplicateRecipe)
@@ -1583,6 +1637,17 @@ function RecipesView() {
     recipe: (typeof recipes)[number]
     index: number
   } | null>(null)
+
+  const recipesOnBring = useMemo(() => {
+    const week = weeks.find((w) => w.id === activeWeekId)
+    const ids = new Set<string>()
+    if (!week?.bringSentAt) return ids
+    for (const slot of week.slots) {
+      if (slot.recipeId) ids.add(slot.recipeId)
+      if (slot.sideRecipeId) ids.add(slot.sideRecipeId)
+    }
+    return ids
+  }, [weeks, activeWeekId])
 
   const clearUndoTimers = () => {
     if (undoTimerRef.current) {
@@ -1758,10 +1823,14 @@ function RecipesView() {
         {browseFlash ? <div className="flash">{browseFlash}</div> : null}
       </div>
 
-      {recipes.map((r) => (
+      {recipes.map((r) => {
+        const onBring = recipesOnBring.has(r.id)
+        return (
         <article
           key={r.id}
-          className={`recipe-card clickable ${detailId === r.id ? 'open' : ''}`}
+          className={`recipe-card clickable ${detailId === r.id ? 'open' : ''}${
+            onBring ? ' bring-sent' : ''
+          }`}
           role="button"
           tabIndex={0}
           onClick={() => setDetailId(detailId === r.id ? null : r.id)}
@@ -1783,6 +1852,7 @@ function RecipesView() {
             <Avatar userId={r.createdBy} />
           </div>
           <div className="tags">
+            {onBring ? <span className="tag tag-bring">Auf Bring</span> : null}
             {(r.kind ?? 'meal') === 'base' ? (
               <span className="tag green">Basis</span>
             ) : null}
@@ -1799,7 +1869,7 @@ function RecipesView() {
           {detailId === r.id ? (
             <>
               {r.notes ? <p className="muted">{r.notes}</p> : null}
-              <IngredientList items={r.ingredients} />
+              <IngredientList items={r.ingredients} onBring={onBring} />
               {r.cookidooUrl ? (
                 <a
                   className="tiny"
@@ -1849,7 +1919,8 @@ function RecipesView() {
             <p className="muted">{r.notes}</p>
           ) : null}
         </article>
-      ))}
+        )
+      })}
 
       {formOpen ? (
         <div
@@ -1976,6 +2047,7 @@ function ShopView({ onPlan }: { onPlan: () => void }) {
     [weeks, activeWeekId],
   )
   const locked = week?.status === 'locked'
+  const bringSent = Boolean(week?.bringSentAt)
   const items = shoppingDraft
   const sendableCount = items.filter((i) => i.name.trim()).length
   const groups = useMemo(() => {
@@ -2000,8 +2072,12 @@ function ShopView({ onPlan }: { onPlan: () => void }) {
               Mengen anpassen, dann an Bring senden.
             </p>
           </div>
-          <span className={`status-pill ${locked ? '' : 'warn'}`}>
-            {locked ? 'Plan final' : 'Noch Pitch'}
+          <span
+            className={`status-pill ${
+              bringSent ? 'bring' : locked ? '' : 'warn'
+            }`}
+          >
+            {bringSent ? 'Auf Bring' : locked ? 'Plan final' : 'Noch Pitch'}
           </span>
         </div>
 
@@ -2118,14 +2194,25 @@ function ShopView({ onPlan }: { onPlan: () => void }) {
           groups.map(([dish, groupItems]) => {
             const day = groupItems.find((i) => i.day)?.day
             return (
-              <section key={dish} className="shop-group">
-                <h3
-                  className={`shop-group-title ${day ? WEEKDAY_COLOR_CLASS[day] : ''}`}
-                >
-                  {dish}
-                </h3>
+              <section
+                key={dish}
+                className={`shop-group${bringSent ? ' bring-sent' : ''}`}
+              >
+                <div className="shop-group-head">
+                  <h3
+                    className={`shop-group-title ${day ? WEEKDAY_COLOR_CLASS[day] : ''}`}
+                  >
+                    {dish}
+                  </h3>
+                  {bringSent ? (
+                    <span className="tag tag-bring">Auf Bring</span>
+                  ) : null}
+                </div>
                 {groupItems.map((item) => (
-                  <div key={item.id} className="shop-row">
+                  <div
+                    key={item.id}
+                    className={`shop-row${bringSent ? ' bring-sent' : ''}`}
+                  >
                     <div className="shop-row-fields">
                       <input
                         className="shop-input name"
@@ -2148,6 +2235,9 @@ function ShopView({ onPlan }: { onPlan: () => void }) {
                         }
                       />
                     </div>
+                    {bringSent ? (
+                      <span className="tag tag-bring shop-row-tag">Bestellt</span>
+                    ) : null}
                     <button
                       type="button"
                       className="btn ghost sm shop-remove"
