@@ -29,6 +29,14 @@ export type CookidooLoginResult = {
   country?: string
   language?: string
   suggestions?: { title: string; id?: string | null }[]
+  debug?: {
+    finalUrl?: string | null
+    status?: number | null
+    cookieKeys?: string[]
+    market?: string
+    base?: string
+    badPassword?: boolean
+  }
 }
 
 export type CookidooImportResult = {

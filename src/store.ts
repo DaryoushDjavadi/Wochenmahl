@@ -629,18 +629,28 @@ export const useStore = create<Store>()(
                 ? JSON.stringify(res.cookies)
                 : ''
             if (!res.ok || !cookiesJson) {
+              const debugBits = res.debug
+                ? [
+                    res.debug.badPassword ? 'Passwort abgelehnt' : null,
+                    res.debug.cookieKeys?.length
+                      ? `Cookies: ${res.debug.cookieKeys.join(',')}`
+                      : null,
+                    res.debug.finalUrl
+                      ? `URL: ${res.debug.finalUrl.slice(0, 120)}`
+                      : null,
+                  ].filter(Boolean)
+                : []
+              const message =
+                [res.message, res.hint, ...debugBits].filter(Boolean).join(' — ') ||
+                'Cookidoo-Login fehlgeschlagen'
               get().updateCookidoo({
                 linked: false,
                 cookies: '',
-                lastError:
-                  [res.message, res.hint].filter(Boolean).join(' — ') ||
-                  'Cookidoo-Login fehlgeschlagen',
+                lastError: message,
               })
               return {
                 ok: false,
-                message:
-                  [res.message, res.hint].filter(Boolean).join(' — ') ||
-                  'Cookidoo-Login fehlgeschlagen',
+                message,
               }
             }
             get().updateCookidoo({
