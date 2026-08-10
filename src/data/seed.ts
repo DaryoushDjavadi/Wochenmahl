@@ -3,13 +3,16 @@ import type {
   Recipe,
   ShoppingItem,
   User,
+  UserId,
+  UserProfile,
   WeekMeal,
   WeekPlan,
   WeekSlot,
 } from '../types'
+import { isMealEmote } from '../types'
 import { repairRecipeCategories } from './categories'
 
-export const USERS: Record<'darius' | 'wendy', User> = {
+export const DEFAULT_USERS: Record<UserId, User> = {
   darius: {
     id: 'darius',
     name: 'Daryoush',
@@ -22,6 +25,87 @@ export const USERS: Record<'darius' | 'wendy', User> = {
     short: 'W',
     color: '#b85c38',
   },
+}
+
+/** @deprecated Prefer resolveUser() — kept for seed/defaults. */
+export const USERS = DEFAULT_USERS
+
+export const AVATAR_EMOJIS = [
+  '👨‍🍳',
+  '👩‍🍳',
+  '🧑‍🍳',
+  '🦊',
+  '🐱',
+  '🐼',
+  '🐸',
+  '🦁',
+  '🐻',
+  '🐰',
+  '🦉',
+  '🐧',
+  '🌮',
+  '🍕',
+  '🥗',
+  '🍜',
+  '🥑',
+  '🍓',
+  '🌟',
+  '🔥',
+  '💪',
+  '😎',
+  '🥰',
+  '🧙',
+] as const
+
+export function shortFromName(name: string, fallback = '?'): string {
+  const t = name.trim()
+  if (!t) return fallback
+  return t[0]!.toLocaleUpperCase('de-DE')
+}
+
+export function normalizeProfiles(
+  raw: unknown,
+): Record<UserId, UserProfile> {
+  const base: Record<UserId, UserProfile> = {
+    darius: {
+      name: DEFAULT_USERS.darius.name,
+      emoji: '',
+    },
+    wendy: {
+      name: DEFAULT_USERS.wendy.name,
+      emoji: '',
+    },
+  }
+  if (!raw || typeof raw !== 'object') return base
+  const obj = raw as Partial<Record<UserId, Partial<UserProfile>>>
+  for (const id of ['darius', 'wendy'] as const) {
+    const row = obj[id]
+    if (!row || typeof row !== 'object') continue
+    const name =
+      typeof row.name === 'string' && row.name.trim()
+        ? row.name.trim().slice(0, 32)
+        : base[id].name
+    const emoji =
+      typeof row.emoji === 'string' ? row.emoji.trim().slice(0, 8) : ''
+    base[id] = { name, emoji }
+  }
+  return base
+}
+
+export function resolveUser(
+  userId: UserId,
+  profiles?: AppSettings['profiles'] | null,
+): User {
+  const base = DEFAULT_USERS[userId]
+  const profile = profiles?.[userId]
+  const name = profile?.name?.trim() || base.name
+  const emoji = profile?.emoji?.trim() || undefined
+  return {
+    ...base,
+    name,
+    short: shortFromName(name, base.short),
+    emoji,
+  }
 }
 
 export const WEEKDAYS = [
@@ -229,6 +313,26 @@ export function shoppingItemKey(
   ].join('|')
 }
 
+export function ingredientStockKey(
+  source: 'main' | 'side',
+  name: string,
+): string {
+  return `${source}:${name.trim().toLowerCase().replace(/\s+/g, ' ')}`
+}
+
+export function mealHasStock(meal: WeekMeal): boolean {
+  return (meal.stockKeys?.length ?? 0) > 0
+}
+
+export function isIngredientInStock(
+  meal: WeekMeal | undefined,
+  source: 'main' | 'side',
+  name: string,
+): boolean {
+  if (!meal?.stockKeys?.length) return false
+  return meal.stockKeys.includes(ingredientStockKey(source, name))
+}
+
 export function mealLabel(
   main?: string | null,
   side?: string | null,
@@ -299,6 +403,8 @@ export function normalizeWeekSlot(raw: unknown): WeekSlot {
           sideRecipeId: m.sideRecipeId,
           sideTitle: m.sideTitle,
           fromPitchId: m.fromPitchId,
+          emotes: normalizeMealEmotes(m.emotes),
+          stockKeys: normalizeStockKeys(m.stockKeys),
         })),
     }
   }
@@ -318,6 +424,33 @@ export function normalizeWeekSlot(raw: unknown): WeekSlot {
     }
   }
   return { day, meals: [] }
+}
+
+function normalizeStockKeys(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const row of raw) {
+    if (typeof row !== 'string') continue
+    const key = row.trim().toLowerCase()
+    if (!key || seen.has(key)) continue
+    if (!/^(main|side):.+/.test(key)) continue
+    seen.add(key)
+    out.push(key)
+  }
+  return out.length ? out : undefined
+}
+
+function normalizeMealEmotes(
+  raw: WeekMeal['emotes'] | undefined,
+): WeekMeal['emotes'] | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const out: NonNullable<WeekMeal['emotes']> = {}
+  for (const uid of ['darius', 'wendy'] as const) {
+    const v = raw[uid]
+    if (isMealEmote(v)) out[uid] = v
+  }
+  return Object.keys(out).length ? out : undefined
 }
 
 export function normalizeWeekPlan(week: WeekPlan): WeekPlan {
@@ -443,5 +576,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
     cookies: '',
     language: 'de-DE',
     suggestions: [],
+  },
+  customCategories: [],
+  profiles: {
+    darius: { name: 'Daryoush', emoji: '' },
+    wendy: { name: 'Wendi', emoji: '' },
   },
 }

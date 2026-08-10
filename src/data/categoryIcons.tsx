@@ -5,6 +5,7 @@ import {
   Coffee,
   Cookie,
   CupSoda,
+  FolderKanban,
   LayoutGrid,
   MoreHorizontal,
   Salad,
@@ -12,9 +13,10 @@ import {
   UtensilsCrossed,
   Wheat,
 } from 'lucide-react'
-import type { RecipeCategory } from '../types'
+import type { BuiltinRecipeCategory, RecipeCategory } from '../types'
+import { isBuiltinCategory } from './categories'
 
-export const CATEGORY_ICON: Record<RecipeCategory, LucideIcon> = {
+export const CATEGORY_ICON: Record<BuiltinRecipeCategory, LucideIcon> = {
   main: UtensilsCrossed,
   soup: Soup,
   salad: Salad,
@@ -32,7 +34,9 @@ export function CategoryIcon({
   size = 16,
   ...props
 }: { category: RecipeCategory } & LucideProps) {
-  const Icon = CATEGORY_ICON[category]
+  const Icon = isBuiltinCategory(category)
+    ? CATEGORY_ICON[category]
+    : FolderKanban
   return <Icon size={size} aria-hidden {...props} />
 }
 

@@ -13,26 +13,37 @@ import {
   createFreshWeek,
   createWeekForMonday,
   mondayOf,
+  normalizeProfiles,
   normalizeWeeks,
   normalizeWeekSlot,
   repairRecipeCookidooLinks,
   shoppingItemKey,
   slotHasMeal,
   weekIdFromMonday,
+  ingredientStockKey,
 } from './data/seed'
 import {
+  RECIPE_CATEGORIES,
   kindFromCategory,
+  kindFromCategoryWithCustom,
+  normalizeCustomCategories,
   repairRecipeCategories,
+  repairRecipeTags,
   resolveRecipeCategory,
+  sanitizeRecipeTags,
+  makeCustomCategoryId,
 } from './data/categories'
 import type {
   AppSettings,
+  CustomRecipeCategory,
   Ingredient,
+  MealEmote,
   Pitch,
   Recipe,
   RecipeCategory,
   ShoppingItem,
   UserId,
+  UserProfile,
   WeekMeal,
   WeekPlan,
   Weekday,
@@ -55,6 +66,8 @@ interface Store {
   ) => void
   duplicateRecipe: (id: string) => string | null
   deleteRecipe: (id: string) => Recipe | null
+  /** Remove week/pitch references after undo window expires. */
+  purgeRecipeReferences: (id: string) => void
   restoreRecipe: (recipe: Recipe, index?: number) => void
   addImportedRecipe: (
     recipe: Omit<Recipe, 'id' | 'createdAt' | 'createdBy'>,
@@ -72,7 +85,7 @@ interface Store {
     sideRecipeId?: string
     sideTitle?: string
   }) => void
-  deletePitch: (pitchId: string) => void
+  deletePitch: (pitchId: string, weekId?: string) => void
   reactToPitch: (
     pitchId: string,
     reaction: 'yes' | 'maybe' | 'no',
@@ -90,8 +103,15 @@ interface Store {
       fromPitchId?: string
     },
   ) => void
-  removeMeal: (day: Weekday, mealId: string) => void
+  removeMeal: (day: Weekday, mealId: string, weekId?: string) => void
   clearSlot: (day: Weekday) => void
+  setMealEmote: (day: Weekday, mealId: string, emote: MealEmote) => void
+  toggleMealStock: (
+    day: Weekday,
+    mealId: string,
+    source: 'main' | 'side',
+    ingredientName: string,
+  ) => void
   lockWeek: () => void
   ensureWeekNotEmptyLocked: () => void
   reopenWeek: () => void
@@ -103,6 +123,20 @@ interface Store {
   addShoppingItem: () => void
   updateBring: (patch: Partial<AppSettings['bring']>) => void
   updateCookidoo: (patch: Partial<AppSettings['cookidoo']>) => void
+  updateMyProfile: (patch: Partial<UserProfile>) => {
+    ok: boolean
+    message: string
+  }
+  addCustomCategory: (input: {
+    label: string
+    hint?: string
+    kind?: CustomRecipeCategory['kind']
+  }) => { ok: boolean; message: string; id?: string }
+  renameCustomCategory: (
+    id: string,
+    label: string,
+  ) => { ok: boolean; message: string }
+  removeCustomCategory: (id: string) => { ok: boolean; message: string }
   linkBring: (
     email: string,
     password: string,
@@ -124,6 +158,10 @@ interface Store {
 function uid(prefix: string) {
   return `${prefix}-${Math.random().toString(36).slice(2, 9)}`
 }
+
+const RECIPE_CATEGORIES_LABELS_LOWER = new Set(
+  RECIPE_CATEGORIES.map((c) => c.label.toLowerCase()),
+)
 
 function activeWeek(get: () => Pick<Store, 'weeks' | 'activeWeekId'>) {
   const state = get()
@@ -171,11 +209,19 @@ export const useStore = create<Store>()(
         addRecipe: (recipe) => {
           const user = get().currentUser
           if (!user) return
+          const custom = get().settings.customCategories ?? []
           const category = resolveRecipeCategory(recipe)
           const next: Recipe = {
             ...recipe,
             category,
-            kind: recipe.kind ?? kindFromCategory(category),
+            kind:
+              recipe.kind ??
+              kindFromCategoryWithCustom(category, custom),
+            tags: sanitizeRecipeTags(recipe.tags, {
+              category,
+              categoryLabel: custom.find((c) => c.id === category)?.label,
+              hasCookidoo: Boolean(recipe.cookidooUrl || recipe.cookidooId),
+            }),
             id: uid('r'),
             createdBy: user,
             createdAt: new Date().toISOString(),
@@ -187,6 +233,7 @@ export const useStore = create<Store>()(
           set({
             recipes: get().recipes.map((r) => {
               if (r.id !== id) return r
+              const custom = get().settings.customCategories ?? []
               const merged = {
                 ...r,
                 ...patch,
@@ -198,7 +245,16 @@ export const useStore = create<Store>()(
               return {
                 ...merged,
                 category,
-                kind: patch.kind ?? kindFromCategory(category),
+                kind:
+                  patch.kind ??
+                  kindFromCategoryWithCustom(category, custom),
+                tags: sanitizeRecipeTags(merged.tags, {
+                  category,
+                  categoryLabel: custom.find((c) => c.id === category)?.label,
+                  hasCookidoo: Boolean(
+                    merged.cookidooUrl || merged.cookidooId,
+                  ),
+                }),
               }
             }),
           })
@@ -228,8 +284,14 @@ export const useStore = create<Store>()(
           const index = list.findIndex((r) => r.id === id)
           if (index < 0) return null
           const removed = list[index]
+          // Soft-remove from library only — week/pitch refs stay until purge
+          // so „Rückgängig“ can restore without losing the plan.
+          set({ recipes: list.filter((r) => r.id !== id) })
+          return removed
+        },
+
+        purgeRecipeReferences: (id) => {
           set({
-            recipes: list.filter((r) => r.id !== id),
             pitches: get().pitches.filter(
               (p) => p.recipeId !== id && p.sideRecipeId !== id,
             ),
@@ -256,7 +318,6 @@ export const useStore = create<Store>()(
               }),
             })),
           })
-          return removed
         },
 
         restoreRecipe: (recipe, index) => {
@@ -275,11 +336,19 @@ export const useStore = create<Store>()(
           const user = get().currentUser
           if (!user) return ''
           const id = uid('r')
+          const custom = get().settings.customCategories ?? []
           const category = resolveRecipeCategory(recipe)
           const next: Recipe = {
             ...recipe,
             category,
-            kind: recipe.kind ?? kindFromCategory(category),
+            kind:
+              recipe.kind ??
+              kindFromCategoryWithCustom(category, custom),
+            tags: sanitizeRecipeTags(recipe.tags, {
+              category,
+              categoryLabel: custom.find((c) => c.id === category)?.label,
+              hasCookidoo: Boolean(recipe.cookidooUrl || recipe.cookidooId),
+            }),
             id,
             createdBy: user,
             createdAt: new Date().toISOString(),
@@ -352,8 +421,9 @@ export const useStore = create<Store>()(
           set({ pitches: [pitch, ...get().pitches] })
         },
 
-        deletePitch: (pitchId) => {
-          const week = activeWeek(get)
+        deletePitch: (pitchId, weekId) => {
+          const targetId = weekId ?? get().activeWeekId
+          const week = get().weeks.find((w) => w.id === targetId)
           if (!week || week.status === 'locked') return
           set({
             pitches: get().pitches.filter((p) => p.id !== pitchId),
@@ -538,12 +608,13 @@ export const useStore = create<Store>()(
           })
         },
 
-        removeMeal: (day, mealId) => {
-          const week = activeWeek(get)
+        removeMeal: (day, mealId, weekId) => {
+          const targetId = weekId ?? get().activeWeekId
+          const week = get().weeks.find((w) => w.id === targetId)
           if (!week || week.status === 'locked') return
           set({
             weeks: get().weeks.map((w) => {
-              if (w.id !== get().activeWeekId) return w
+              if (w.id !== targetId) return w
               return {
                 ...w,
                 bringSentAt: undefined,
@@ -557,8 +628,92 @@ export const useStore = create<Store>()(
                 }),
               }
             }),
-            shoppingDraft: get().shoppingDraft,
           })
+        },
+
+        setMealEmote: (day, mealId, emote) => {
+          const user = get().currentUser
+          if (!user) return
+          set({
+            weeks: get().weeks.map((w) => {
+              if (w.id !== get().activeWeekId) return w
+              return {
+                ...w,
+                slots: w.slots.map((s) => {
+                  const slot = normalizeWeekSlot(s)
+                  if (slot.day !== day) return slot
+                  return {
+                    day,
+                    meals: slot.meals.map((m) => {
+                      if (m.id !== mealId) return m
+                      const prev = m.emotes?.[user]
+                      const nextEmotes = { ...(m.emotes ?? {}) }
+                      if (prev === emote) {
+                        delete nextEmotes[user]
+                      } else {
+                        nextEmotes[user] = emote
+                      }
+                      const keys = Object.keys(nextEmotes)
+                      return {
+                        ...m,
+                        emotes: keys.length
+                          ? nextEmotes
+                          : undefined,
+                      }
+                    }),
+                  }
+                }),
+              }
+            }),
+          })
+        },
+
+        toggleMealStock: (day, mealId, source, ingredientName) => {
+          if (!ingredientName.trim()) return
+          const key = ingredientStockKey(source, ingredientName)
+          set({
+            weeks: get().weeks.map((w) => {
+              if (w.id !== get().activeWeekId) return w
+              return {
+                ...w,
+                slots: w.slots.map((s) => {
+                  const slot = normalizeWeekSlot(s)
+                  if (slot.day !== day) return slot
+                  return {
+                    day,
+                    meals: slot.meals.map((m) => {
+                      if (m.id !== mealId) return m
+                      const prev = new Set(m.stockKeys ?? [])
+                      if (prev.has(key)) prev.delete(key)
+                      else prev.add(key)
+                      const stockKeys = [...prev]
+                      return {
+                        ...m,
+                        stockKeys: stockKeys.length ? stockKeys : undefined,
+                      }
+                    }),
+                  }
+                }),
+              }
+            }),
+          })
+          const week = activeWeek(get)
+          if (week?.status === 'locked') {
+            const extras = get().shoppingDraft.filter((i) => i.dish === 'Extra')
+            get().buildShoppingList()
+            if (extras.length > 0) {
+              const auto = get().shoppingDraft
+              set({
+                shoppingDraft: [
+                  ...auto,
+                  ...extras.map((e) => ({
+                    ...e,
+                    id: e.id.startsWith('shop-') ? e.id : uid('shop'),
+                  })),
+                ],
+              })
+            }
+          }
         },
 
         clearSlot: (day) => {
@@ -687,6 +842,10 @@ export const useStore = create<Store>()(
                 if (recipe) {
                   const dish = `${recipe.title} (${dayLabel(slot.day)})`
                   for (const ing of recipe.ingredients) {
+                    const inStock = (meal.stockKeys ?? []).includes(
+                      ingredientStockKey('main', ing.name),
+                    )
+                    if (inStock) continue
                     pushItem({
                       name: ing.name,
                       amount: ing.amount,
@@ -696,17 +855,27 @@ export const useStore = create<Store>()(
                   }
                 }
               } else if (meal.title?.trim()) {
-                pushItem({
-                  name: meal.title.trim(),
-                  dish: `${meal.title.trim()} (${dayLabel(slot.day)})`,
-                  day: slot.day,
-                })
+                const title = meal.title.trim()
+                const inStock = (meal.stockKeys ?? []).includes(
+                  ingredientStockKey('main', title),
+                )
+                if (!inStock) {
+                  pushItem({
+                    name: title,
+                    dish: `${title} (${dayLabel(slot.day)})`,
+                    day: slot.day,
+                  })
+                }
               }
               if (meal.sideRecipeId) {
                 const side = recipes.find((r) => r.id === meal.sideRecipeId)
                 if (side) {
                   const dish = `${side.title} (${dayLabel(slot.day)})`
                   for (const ing of side.ingredients) {
+                    const inStock = (meal.stockKeys ?? []).includes(
+                      ingredientStockKey('side', ing.name),
+                    )
+                    if (inStock) continue
                     pushItem({
                       name: ing.name,
                       amount: ing.amount,
@@ -716,11 +885,17 @@ export const useStore = create<Store>()(
                   }
                 }
               } else if (meal.sideTitle?.trim()) {
-                pushItem({
-                  name: meal.sideTitle.trim(),
-                  dish: `${meal.sideTitle.trim()} (${dayLabel(slot.day)})`,
-                  day: slot.day,
-                })
+                const title = meal.sideTitle.trim()
+                const inStock = (meal.stockKeys ?? []).includes(
+                  ingredientStockKey('side', title),
+                )
+                if (!inStock) {
+                  pushItem({
+                    name: title,
+                    dish: `${title} (${dayLabel(slot.day)})`,
+                    day: slot.day,
+                  })
+                }
               }
             }
           }
@@ -810,6 +985,119 @@ export const useStore = create<Store>()(
               cookidoo: { ...get().settings.cookidoo, ...patch },
             },
           }),
+
+        updateMyProfile: (patch) => {
+          const user = get().currentUser
+          if (!user) return { ok: false, message: 'Nicht eingeloggt.' }
+          const profiles = normalizeProfiles(get().settings.profiles)
+          const prev = profiles[user]
+          const name =
+            typeof patch.name === 'string'
+              ? patch.name.trim().slice(0, 32)
+              : prev.name
+          if (!name) {
+            return { ok: false, message: 'Name darf nicht leer sein.' }
+          }
+          const emoji =
+            typeof patch.emoji === 'string'
+              ? patch.emoji.trim().slice(0, 8)
+              : prev.emoji
+          set({
+            settings: {
+              ...get().settings,
+              profiles: {
+                ...profiles,
+                [user]: { name, emoji },
+              },
+            },
+          })
+          return { ok: true, message: 'Profil gespeichert' }
+        },
+
+        addCustomCategory: ({ label, hint, kind }) => {
+          const trimmed = label.trim()
+          if (!trimmed) {
+            return { ok: false, message: 'Name fehlt.' }
+          }
+          const existing = get().settings.customCategories ?? []
+          if (
+            existing.some(
+              (c) => c.label.toLowerCase() === trimmed.toLowerCase(),
+            ) ||
+            RECIPE_CATEGORIES_LABELS_LOWER.has(trimmed.toLowerCase())
+          ) {
+            return { ok: false, message: 'Kategorie gibt es schon.' }
+          }
+          const id = makeCustomCategoryId(trimmed, existing)
+          const next: CustomRecipeCategory = {
+            id,
+            label: trimmed,
+            hint: hint?.trim() || undefined,
+            kind: kind ?? 'meal',
+          }
+          set({
+            settings: {
+              ...get().settings,
+              customCategories: [...existing, next],
+            },
+          })
+          return { ok: true, message: `„${trimmed}“ angelegt`, id }
+        },
+
+        renameCustomCategory: (id, label) => {
+          const trimmed = label.trim()
+          if (!trimmed) return { ok: false, message: 'Name fehlt.' }
+          const existing = get().settings.customCategories ?? []
+          if (!existing.some((c) => c.id === id)) {
+            return { ok: false, message: 'Kategorie nicht gefunden.' }
+          }
+          if (
+            existing.some(
+              (c) =>
+                c.id !== id &&
+                c.label.toLowerCase() === trimmed.toLowerCase(),
+            ) ||
+            RECIPE_CATEGORIES_LABELS_LOWER.has(trimmed.toLowerCase())
+          ) {
+            return { ok: false, message: 'Name schon vergeben.' }
+          }
+          set({
+            settings: {
+              ...get().settings,
+              customCategories: existing.map((c) =>
+                c.id === id ? { ...c, label: trimmed } : c,
+              ),
+            },
+          })
+          return { ok: true, message: 'Umbenannt' }
+        },
+
+        removeCustomCategory: (id) => {
+          const existing = get().settings.customCategories ?? []
+          if (!existing.some((c) => c.id === id)) {
+            return { ok: false, message: 'Kategorie nicht gefunden.' }
+          }
+          set({
+            settings: {
+              ...get().settings,
+              customCategories: existing.filter((c) => c.id !== id),
+            },
+            recipes: get().recipes.map((r) =>
+              r.category === id
+                ? {
+                    ...r,
+                    category: 'other',
+                    kind:
+                      r.kind === 'base' || r.kind === 'side' ? r.kind : 'meal',
+                  }
+                : r,
+            ),
+          })
+          return {
+            ok: true,
+            message: 'Kategorie gelöscht — Rezepte → Sonstiges',
+          }
+        },
 
         linkBring: async (email, password) => {
           try {
@@ -945,10 +1233,44 @@ export const useStore = create<Store>()(
               const sentAt = new Date().toISOString()
               const newKeys = pending.map((i) => shoppingItemKey(i))
               const nextKeys = [...new Set([...sentKeys, ...newKeys])]
+              const pendingDishes = new Set(
+                pending.map((i) => (i.dish ?? '').trim().toLowerCase()),
+              )
               const mealIds = new Set(week.bringSentMealIds ?? [])
+              const dayLabel = (day: Weekday) =>
+                WEEKDAYS.find((d) => d.id === day)?.label ?? day
               for (const raw of week.slots) {
-                for (const meal of normalizeWeekSlot(raw).meals) {
-                  mealIds.add(meal.id)
+                const slot = normalizeWeekSlot(raw)
+                for (const meal of slot.meals) {
+                  const recipes = get().recipes
+                  const main = meal.recipeId
+                    ? recipes.find((r) => r.id === meal.recipeId)
+                    : undefined
+                  const side = meal.sideRecipeId
+                    ? recipes.find((r) => r.id === meal.sideRecipeId)
+                    : undefined
+                  const dishes: string[] = []
+                  if (main) {
+                    dishes.push(
+                      `${main.title} (${dayLabel(slot.day)})`.toLowerCase(),
+                    )
+                  } else if (meal.title?.trim()) {
+                    dishes.push(
+                      `${meal.title.trim()} (${dayLabel(slot.day)})`.toLowerCase(),
+                    )
+                  }
+                  if (side) {
+                    dishes.push(
+                      `${side.title} (${dayLabel(slot.day)})`.toLowerCase(),
+                    )
+                  } else if (meal.sideTitle?.trim()) {
+                    dishes.push(
+                      `${meal.sideTitle.trim()} (${dayLabel(slot.day)})`.toLowerCase(),
+                    )
+                  }
+                  if (dishes.some((d) => pendingDishes.has(d))) {
+                    mealIds.add(meal.id)
+                  }
                 }
               }
               const nextMealIds = [...mealIds]
@@ -1152,11 +1474,32 @@ export const useStore = create<Store>()(
           weeks: normalizeWeeks(
             (Array.isArray(p.weeks) ? p.weeks : current.weeks) as WeekPlan[],
           ),
-          recipes: repairRecipeCategories(
-            repairRecipeCookidooLinks(
-              (Array.isArray(p.recipes) ? p.recipes : current.recipes) as Recipe[],
+          recipes: repairRecipeTags(
+            repairRecipeCategories(
+              repairRecipeCookidooLinks(
+                (Array.isArray(p.recipes) ? p.recipes : current.recipes) as Recipe[],
+              ),
             ),
           ),
+          settings: {
+            ...DEFAULT_SETTINGS,
+            ...(p.settings ?? current.settings),
+            bring: {
+              ...DEFAULT_SETTINGS.bring,
+              ...(p.settings?.bring ?? current.settings.bring),
+            },
+            cookidoo: {
+              ...DEFAULT_SETTINGS.cookidoo,
+              ...(p.settings?.cookidoo ?? current.settings.cookidoo),
+            },
+            customCategories: normalizeCustomCategories(
+              p.settings?.customCategories ??
+                current.settings.customCategories,
+            ),
+            profiles: normalizeProfiles(
+              p.settings?.profiles ?? current.settings.profiles,
+            ),
+          },
         }
       },
     },

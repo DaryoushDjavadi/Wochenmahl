@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import {
   CalendarDays,
   CalendarRange,
@@ -13,30 +13,38 @@ import {
   LockOpen,
   Menu,
   MessageSquarePlus,
+  MoreVertical,
   Pin,
+  Plus,
   RefreshCw,
   Search,
   Settings,
   ShoppingBasket,
   ShoppingCart,
+  SmilePlus,
   Trash2,
   UtensilsCrossed,
 } from 'lucide-react'
 import {
-  USERS,
+  AVATAR_EMOJIS,
+  ingredientStockKey,
   mealDishLabel,
   mealLabel,
   mondayOf,
   normalizeWeekSlot,
   parseWeekMonday,
+  resolveUser,
   slotHasMeal,
   weekIdFromMonday,
 } from './data/seed'
 import {
-  CATEGORY_LABEL,
-  RECIPE_CATEGORIES,
-  kindFromCategory,
+  categoryChipClass,
+  categoryLabel,
+  categoryTagClass,
+  kindFromCategoryWithCustom,
+  listRecipeCategories,
   resolveRecipeCategory,
+  sanitizeRecipeTags,
   tagToneClass,
 } from './data/categories'
 import {
@@ -45,6 +53,7 @@ import {
 } from './data/categoryIcons'
 import {
   fetchBringList,
+  importCookidooRecipeApi,
   listCookidooCollectionRecipes,
   listCookidooCollections,
   searchCookidooRecipes,
@@ -52,6 +61,7 @@ import {
   type CookidooBrowseRecipe,
 } from './api/integrations'
 import { useStore } from './store'
+import { playBurstExit, useJustAppeared } from './motion'
 import {
   getSyncStatus,
   subscribeSync,
@@ -59,14 +69,45 @@ import {
 } from './sync/householdSync'
 import type {
   Ingredient,
+  MealEmote,
   Recipe,
   RecipeCategory,
   UserId,
+  WeekMeal,
   WeekSlot,
   Weekday,
 } from './types'
+import { MEAL_EMOTES } from './types'
 
 type Tab = 'week' | 'pitch' | 'recipes' | 'shop' | 'settings' | 'help'
+
+const TAB_STORAGE_KEY = 'wochenkochen-tab'
+const VALID_TABS: Tab[] = [
+  'week',
+  'pitch',
+  'recipes',
+  'shop',
+  'settings',
+  'help',
+]
+
+function readStoredTab(): Tab {
+  try {
+    const raw = localStorage.getItem(TAB_STORAGE_KEY)
+    if (raw && (VALID_TABS as string[]).includes(raw)) return raw as Tab
+  } catch {
+    /* ignore */
+  }
+  return 'week'
+}
+
+function writeStoredTab(tab: Tab) {
+  try {
+    localStorage.setItem(TAB_STORAGE_KEY, tab)
+  } catch {
+    /* ignore */
+  }
+}
 
 const WEEKDAY_LABELS: Record<Weekday, string> = {
   mo: 'Montag',
@@ -89,39 +130,218 @@ const WEEKDAY_COLOR_CLASS: Record<Weekday, string> = {
 }
 
 function Avatar({ userId, size = 28 }: { userId: UserId; size?: number }) {
-  const user = USERS[userId]
+  const profiles = useStore((s) => s.settings.profiles)
+  const user = resolveUser(userId, profiles)
   return (
     <span
-      className="avatar"
-      style={{ background: user.color, width: size, height: size }}
+      className={`avatar${user.emoji ? ' emoji' : ''}`}
+      style={{
+        background: user.emoji ? 'var(--panel)' : user.color,
+        width: size,
+        height: size,
+        fontSize: user.emoji ? Math.round(size * 0.72) : undefined,
+      }}
+      title={user.name}
       aria-hidden
     >
-      {user.short}
+      {user.emoji || user.short}
     </span>
+  )
+}
+
+function useResolvedUser(userId: UserId) {
+  const profiles = useStore((s) => s.settings.profiles)
+  return resolveUser(userId, profiles)
+}
+
+function MealEmoteControl({
+  day,
+  meal,
+}: {
+  day: Weekday
+  meal: WeekMeal
+}) {
+  const currentUser = useStore((s) => s.currentUser)
+  const profiles = useStore((s) => s.settings.profiles)
+  const setMealEmote = useStore((s) => s.setMealEmote)
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const mine = currentUser ? meal.emotes?.[currentUser] : undefined
+  const entries = (['darius', 'wendy'] as const)
+    .map((uid) =>
+      meal.emotes?.[uid]
+        ? { uid, emote: meal.emotes[uid] as MealEmote }
+        : null,
+    )
+    .filter(Boolean) as { uid: UserId; emote: MealEmote }[]
+
+  useEffect(() => {
+    if (!open) return
+    const onDoc = (e: PointerEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('pointerdown', onDoc)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('pointerdown', onDoc)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  return (
+    <div
+      className={`meal-emote${open ? ' open' : ''}`}
+      ref={rootRef}
+    >
+      <button
+        type="button"
+        className={`btn ghost sm meal-emote-trigger${mine ? ' has-mine' : ''}`}
+        aria-label="Reaktion wählen"
+        aria-expanded={open}
+        title="Reaktion abgeben"
+        onClick={(e) => {
+          e.stopPropagation()
+          setOpen((v) => !v)
+        }}
+      >
+        <SmilePlus size={16} aria-hidden />
+      </button>
+      {entries.length > 0 ? (
+        <div className="meal-emote-shown" aria-label="Reaktionen">
+          {entries.map(({ uid, emote }) => {
+            const who = resolveUser(uid, profiles)
+            return (
+              <span
+                key={uid}
+                className={`meal-emote-chip${uid === currentUser ? ' mine' : ''}`}
+                title={`${who.name}: ${emote}`}
+              >
+                <span className="meal-emote-who">{who.short}</span>
+                <span aria-hidden>{emote}</span>
+              </span>
+            )
+          })}
+        </div>
+      ) : null}
+      {open ? (
+        <div
+          className="meal-emote-picker fx-pop-in"
+          role="listbox"
+          aria-label="7 Reaktionen"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {MEAL_EMOTES.map((emote) => (
+            <button
+              key={emote}
+              type="button"
+              role="option"
+              aria-selected={mine === emote}
+              className={`meal-emote-option${mine === emote ? ' active' : ''}`}
+              onClick={(e) => {
+                e.stopPropagation()
+                setMealEmote(day, meal.id, emote)
+                setOpen(false)
+              }}
+            >
+              {emote}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
   )
 }
 
 function IngredientList({
   items,
   onBring = false,
+  stockKeys,
+  stockSource,
+  onToggleStock,
 }: {
   items: Ingredient[]
   onBring?: boolean
+  stockKeys?: string[]
+  stockSource?: 'main' | 'side'
+  onToggleStock?: (ingredientName: string) => void
 }) {
   if (items.length === 0) {
     return <p className="muted tiny">Keine Zutaten hinterlegt.</p>
   }
+  const editable = Boolean(onToggleStock && stockSource)
   return (
-    <ul className="ingredient-list">
-      {items.map((item, i) => (
-        <li key={`${item.name}-${i}`} className={onBring ? 'on-bring' : undefined}>
-          <span className="ingredient-main">
-            <span>{item.name}</span>
-            {onBring ? <span className="tag tag-bring">Auf Bring</span> : null}
-          </span>
-          {item.amount ? <strong>{item.amount}</strong> : null}
-        </li>
-      ))}
+    <ul className={`ingredient-list${editable ? ' stockable' : ''}`}>
+      {items.map((item, i) => {
+        const inStock =
+          editable &&
+          (stockKeys ?? []).includes(
+            ingredientStockKey(stockSource!, item.name),
+          )
+        const content = (
+          <>
+            <span className="ingredient-main">
+              {editable ? (
+                <span
+                  className={`stock-check${inStock ? ' on' : ''}`}
+                  aria-hidden
+                >
+                  {inStock ? (
+                    <Check size={14} strokeWidth={3} />
+                  ) : (
+                    <span className="stock-check-empty" />
+                  )}
+                </span>
+              ) : null}
+              <span className={inStock ? 'stock-name' : undefined}>
+                {item.name}
+              </span>
+              {inStock ? (
+                <span className="tag tag-stock">Auf Lager</span>
+              ) : null}
+              {onBring && !inStock ? (
+                <span className="tag tag-bring">Auf Bring</span>
+              ) : null}
+            </span>
+            {item.amount ? <strong>{item.amount}</strong> : null}
+          </>
+        )
+        if (editable) {
+          return (
+            <li
+              key={`${item.name}-${i}`}
+              className={`${inStock ? 'in-stock' : ''}${onBring && !inStock ? ' on-bring' : ''}`}
+            >
+              <button
+                type="button"
+                className="ingredient-stock-btn"
+                aria-pressed={inStock}
+                aria-label={
+                  inStock
+                    ? `${item.name} — nicht mehr auf Lager`
+                    : `${item.name} — auf Lager abhaken`
+                }
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onToggleStock!(item.name)
+                }}
+              >
+                {content}
+              </button>
+            </li>
+          )
+        }
+        return (
+          <li
+            key={`${item.name}-${i}`}
+            className={onBring ? 'on-bring' : undefined}
+          >
+            {content}
+          </li>
+        )
+      })}
     </ul>
   )
 }
@@ -131,18 +351,32 @@ function RecipeDetailBlock({
   fallbackTitle,
   role,
   onBring = false,
+  stockKeys,
+  stockSource,
+  onToggleStock,
 }: {
   recipe?: Recipe
   fallbackTitle?: string
   role?: string
   onBring?: boolean
+  stockKeys?: string[]
+  stockSource?: 'main' | 'side'
+  onToggleStock?: (ingredientName: string) => void
 }) {
+  const customCategories = useStore((s) => s.settings.customCategories ?? [])
+  const author = useResolvedUser(recipe?.createdBy ?? 'darius')
   const title = recipe?.title || fallbackTitle
   if (!title) return null
   const kind = recipe?.kind ?? 'meal'
   const category = recipe
     ? resolveRecipeCategory(recipe)
     : undefined
+  const ingredients =
+    recipe?.ingredients?.length
+      ? recipe.ingredients
+      : onToggleStock
+        ? [{ name: title }]
+        : []
 
   return (
     <section className={`recipe-detail ${onBring ? 'on-bring' : ''}`}>
@@ -152,7 +386,7 @@ function RecipeDetailBlock({
           <h3>{title}</h3>
           {recipe ? (
             <p className="muted tiny">
-              {CATEGORY_LABEL[category!]} · von {USERS[recipe.createdBy].name} ·{' '}
+              {categoryLabel(category!, customCategories)} · von {author.name} ·{' '}
               {recipe.ingredients.length} Zutaten
             </p>
           ) : (
@@ -164,9 +398,9 @@ function RecipeDetailBlock({
       <div className="tags">
         {onBring ? <span className="tag tag-bring">Auf Bring</span> : null}
         {category ? (
-          <span className={`tag tag-cat tag-cat-${category}`}>
+          <span className={categoryTagClass(category)}>
             <CategoryIcon category={category} size={14} />
-            {CATEGORY_LABEL[category]}
+            {categoryLabel(category, customCategories)}
           </span>
         ) : null}
         {kind === 'base' && category !== 'base' ? (
@@ -175,18 +409,32 @@ function RecipeDetailBlock({
         {kind === 'side' && category !== 'side' ? (
           <span className="tag tag-cat tag-cat-side">Beilage</span>
         ) : null}
-        {recipe?.tags.map((t) => (
-          <span key={t} className={`tag ${tagToneClass(t)}`}>
-            {t}
-          </span>
-        ))}
+        {recipe
+          ? sanitizeRecipeTags(recipe.tags, {
+              category: category ?? undefined,
+              categoryLabel: category
+                ? categoryLabel(category, customCategories)
+                : undefined,
+              hasCookidoo: Boolean(recipe.cookidooUrl || recipe.cookidooId),
+            }).map((t) => (
+              <span key={t} className={`tag ${tagToneClass(t)}`}>
+                {t}
+              </span>
+            ))
+          : null}
         {recipe?.cookidooUrl ? (
           <span className="tag tag-cookidoo">Cookidoo</span>
         ) : null}
       </div>
       {recipe?.notes ? <p className="muted">{recipe.notes}</p> : null}
-      {recipe ? (
-        <IngredientList items={recipe.ingredients} onBring={onBring} />
+      {ingredients.length > 0 ? (
+        <IngredientList
+          items={ingredients}
+          onBring={onBring}
+          stockKeys={stockKeys}
+          stockSource={stockSource}
+          onToggleStock={onToggleStock}
+        />
       ) : null}
       {recipe?.cookidooUrl ? (
         <a
@@ -219,7 +467,13 @@ function MealDetailModal({
   onClear?: () => void
   onRemoveMeal?: (mealId: string) => void
 }) {
+  const toggleMealStock = useStore((s) => s.toggleMealStock)
   const meals = normalizeWeekSlot(slot).meals
+  const mealIds = useMemo(
+    () => normalizeWeekSlot(slot).meals.map((m) => m.id),
+    [slot],
+  )
+  const freshMeals = useJustAppeared(mealIds)
   const headline =
     meals.length === 0
       ? 'Gericht'
@@ -230,10 +484,19 @@ function MealDetailModal({
     meals.length > 0 && meals.every((m) => sentMealIds?.has(m.id))
   const someSent = meals.some((m) => sentMealIds?.has(m.id))
 
+  const removeWithBurst = (
+    mealId: string,
+    e: MouseEvent<HTMLButtonElement>,
+  ) => {
+    if (!onRemoveMeal) return
+    const block = e.currentTarget.closest('.day-meal-block') as HTMLElement | null
+    playBurstExit(block, () => onRemoveMeal(mealId))
+  }
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div
-        className="modal stack meal-detail-modal"
+        className="modal stack meal-detail-modal fx-pop-in"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
@@ -263,6 +526,11 @@ function MealDetailModal({
           </div>
         ) : null}
 
+        <p className="muted tiny">
+          Zutaten antippen = schon daheim („Auf Lager“) — die landen nicht auf
+          Bring.
+        </p>
+
         {meals.length === 0 ? (
           <p className="muted">Für diesen Tag liegt noch kein Rezept vor.</p>
         ) : (
@@ -272,31 +540,68 @@ function MealDetailModal({
             const sideTitle = meal.sideTitle || side?.title
             const label = mealDishLabel(meal, recipes)
             const mealSent = Boolean(sentMealIds?.has(meal.id))
+            const stockCount = meal.stockKeys?.length ?? 0
             return (
-              <div key={meal.id} className="stack day-meal-block">
+              <div
+                key={meal.id}
+                className={`stack day-meal-block${freshMeals.has(meal.id) ? ' fx-pop-in' : ''}`}
+              >
                 {meals.length > 1 ? (
                   <div className="row">
                     <h3 className="grow">{label}</h3>
+                    {stockCount > 0 ? (
+                      <span className="tag tag-stock">
+                        {stockCount} auf Lager
+                      </span>
+                    ) : null}
                     {mealSent ? (
                       <span className="tag tag-bring">Auf Bring</span>
                     ) : null}
+                    <MealEmoteControl day={day} meal={meal} />
                     {onRemoveMeal ? (
                       <button
                         type="button"
                         className="btn ghost sm icon-delete"
                         aria-label={`${label} löschen`}
-                        onClick={() => onRemoveMeal(meal.id)}
+                        onClick={(e) => removeWithBurst(meal.id, e)}
                       >
                         <Trash2 size={16} aria-hidden />
                       </button>
                     ) : null}
                   </div>
-                ) : null}
+                ) : (
+                  <div className="row" style={{ justifyContent: 'flex-end' }}>
+                    {stockCount > 0 ? (
+                      <span className="tag tag-stock">
+                        {stockCount} auf Lager
+                      </span>
+                    ) : null}
+                    {mealSent ? (
+                      <span className="tag tag-bring">Auf Bring</span>
+                    ) : null}
+                    <MealEmoteControl day={day} meal={meal} />
+                    {onRemoveMeal ? (
+                      <button
+                        type="button"
+                        className="btn ghost sm icon-delete"
+                        aria-label={`${label} löschen`}
+                        onClick={(e) => removeWithBurst(meal.id, e)}
+                      >
+                        <Trash2 size={16} aria-hidden />
+                      </button>
+                    ) : null}
+                  </div>
+                )}
                 <RecipeDetailBlock
                   recipe={main}
                   fallbackTitle={meal.title || label}
                   role={sideTitle ? 'Haupt / Basis' : undefined}
                   onBring={mealSent}
+                  stockKeys={meal.stockKeys}
+                  stockSource="main"
+                  onToggleStock={(name) =>
+                    toggleMealStock(day, meal.id, 'main', name)
+                  }
                 />
                 {sideTitle ? (
                   <RecipeDetailBlock
@@ -304,6 +609,11 @@ function MealDetailModal({
                     fallbackTitle={sideTitle}
                     role="Beilage"
                     onBring={mealSent}
+                    stockKeys={meal.stockKeys}
+                    stockSource="side"
+                    onToggleStock={(name) =>
+                      toggleMealStock(day, meal.id, 'side', name)
+                    }
                   />
                 ) : null}
                 {meals.length === 1 && onRemoveMeal ? (
@@ -856,6 +1166,9 @@ function CookidooBrowseModal({
 
 function LoginScreen() {
   const login = useStore((s) => s.login)
+  const profiles = useStore((s) => s.settings.profiles)
+  const darius = resolveUser('darius', profiles)
+  const wendy = resolveUser('wendy', profiles)
   const logoSrc = `${import.meta.env.BASE_URL}logo.png`
   return (
     <div className="app-shell login-shell">
@@ -870,8 +1183,8 @@ function LoginScreen() {
           />
           <h1>Wochenkochen</h1>
           <p>
-            Am Wochenende pitchen, festnageln, einkaufen — Daryoush &amp; Wendi
-            planen die nächste Woche gemeinsam.
+            Am Wochenende pitchen, festnageln, einkaufen — {darius.name} &amp;{' '}
+            {wendy.name} planen die nächste Woche gemeinsam.
           </p>
         </div>
         <div className="panel solid stack">
@@ -883,15 +1196,15 @@ function LoginScreen() {
             <button type="button" onClick={() => login('darius')}>
               <Avatar userId="darius" size={44} />
               <span>
-                <strong>Daryoush</strong>
-                <span>Weiter als Daryoush</span>
+                <strong>{darius.name}</strong>
+                <span>Weiter als {darius.name}</span>
               </span>
             </button>
             <button type="button" onClick={() => login('wendy')}>
               <Avatar userId="wendy" size={44} />
               <span>
-                <strong>Wendi</strong>
-                <span>Weiter als Wendi</span>
+                <strong>{wendy.name}</strong>
+                <span>Weiter als {wendy.name}</span>
               </span>
             </button>
           </div>
@@ -911,6 +1224,7 @@ function TopBar({
   onHome: () => void
 }) {
   const currentUser = useStore((s) => s.currentUser)!
+  const me = useResolvedUser(currentUser)
   const logout = useStore((s) => s.logout)
   const weeks = useStore((s) => s.weeks)
   const activeWeekId = useStore((s) => s.activeWeekId)
@@ -923,11 +1237,12 @@ function TopBar({
 
   useEffect(() => {
     if (!menuOpen) return
-    const onDoc = (e: MouseEvent) => {
-      if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false)
+    const onDoc = (e: Event) => {
+      const target = (e as globalThis.MouseEvent).target
+      if (!menuRef.current?.contains(target as Node)) setMenuOpen(false)
     }
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setMenuOpen(false)
+    const onKey = (e: Event) => {
+      if ((e as KeyboardEvent).key === 'Escape') setMenuOpen(false)
     }
     document.addEventListener('mousedown', onDoc)
     document.addEventListener('keydown', onKey)
@@ -1031,7 +1346,7 @@ function TopBar({
         title="Abmelden"
       >
         <Avatar userId={currentUser} />
-        <span>{USERS[currentUser].name}</span>
+        <span>{me.name}</span>
       </button>
     </header>
   )
@@ -1077,6 +1392,7 @@ function WeekView({
   const weeks = useStore((s) => s.weeks)
   const activeWeekId = useStore((s) => s.activeWeekId)
   const recipes = useStore((s) => s.recipes)
+  const customCategories = useStore((s) => s.settings.customCategories ?? [])
   const allPitches = useStore((s) => s.pitches)
   const assignSlot = useStore((s) => s.assignSlot)
   const clearSlot = useStore((s) => s.clearSlot)
@@ -1088,6 +1404,9 @@ function WeekView({
   const [pickingDay, setPickingDay] = useState<Weekday | null>(null)
   const [detailDay, setDetailDay] = useState<Weekday | null>(null)
   const [calendarOpen, setCalendarOpen] = useState(false)
+  const [pickerFilter, setPickerFilter] = useState<
+    RecipeCategory | 'all' | 'pitches'
+  >('all')
   const [pendingBase, setPendingBase] = useState<{
     recipeId: string
     title: string
@@ -1097,6 +1416,24 @@ function WeekView({
     () => weeks.find((w) => w.id === activeWeekId),
     [weeks, activeWeekId],
   )
+  const weekMealIds = useMemo(() => {
+    const ids: string[] = []
+    for (const raw of week?.slots ?? []) {
+      for (const meal of normalizeWeekSlot(raw).meals) ids.push(meal.id)
+    }
+    return ids
+  }, [week?.slots])
+  const freshMeals = useJustAppeared(weekMealIds)
+
+  const removeMealWithBurst = (
+    day: Weekday,
+    mealId: string,
+    el: HTMLElement | null,
+  ) => {
+    const weekId = activeWeekId
+    playBurstExit(el, () => removeMeal(day, mealId, weekId))
+  }
+
   const pitches = useMemo(
     () => allPitches.filter((p) => p.weekId === activeWeekId),
     [allPitches, activeWeekId],
@@ -1110,6 +1447,10 @@ function WeekView({
     }
     return ids
   }, [week?.slots])
+  const pickerCategories = useMemo(
+    () => listRecipeCategories(customCategories),
+    [customCategories],
+  )
   const sideRecipes = useMemo(
     () => recipes.filter((r) => (r.kind ?? 'meal') === 'side'),
     [recipes],
@@ -1118,6 +1459,19 @@ function WeekView({
     () => recipes.filter((r) => (r.kind ?? 'meal') !== 'side'),
     [recipes],
   )
+  const pickerRecipes = useMemo(() => {
+    if (pickerFilter === 'pitches') return []
+    if (pickerFilter === 'all') return mainRecipes
+    return mainRecipes.filter(
+      (r) => resolveRecipeCategory(r) === pickerFilter,
+    )
+  }, [mainRecipes, pickerFilter])
+  const pickerSideRecipes = useMemo(() => {
+    if (pickerFilter === 'all' || pickerFilter === 'pitches') return sideRecipes
+    return sideRecipes.filter(
+      (r) => resolveRecipeCategory(r) === pickerFilter,
+    )
+  }, [sideRecipes, pickerFilter])
   const plannedCount = useMemo(
     () => week?.slots.filter((s) => slotHasMeal(s)).length ?? 0,
     [week],
@@ -1154,6 +1508,21 @@ function WeekView({
   const closePicker = () => {
     setPickingDay(null)
     setPendingBase(null)
+    setPickerFilter('all')
+  }
+
+  const pickRecipeForDay = (r: (typeof recipes)[number]) => {
+    if (!pickingDay) return
+    if ((r.kind ?? 'meal') === 'base' || resolveRecipeCategory(r) === 'base') {
+      setPendingBase({ recipeId: r.id, title: r.title })
+      setPickerFilter('all')
+      return
+    }
+    assignSlot(pickingDay, {
+      recipeId: r.id,
+      title: r.title,
+    })
+    closePicker()
   }
 
   const pitching = week.status === 'pitching'
@@ -1350,7 +1719,10 @@ function WeekView({
                     const side = meal.sideTitle || sideRecipe?.title
                     const mealSent = sentMealIds.has(meal.id)
                     return (
-                      <li key={meal.id} className="day-meal-item">
+                      <li
+                        key={meal.id}
+                        className={`day-meal-item${freshMeals.has(meal.id) ? ' fx-pop-in' : ''}`}
+                      >
                         <div className="row">
                           <h3 className="grow">{mealDishLabel(meal, recipes)}</h3>
                           {mealSent ? (
@@ -1358,6 +1730,15 @@ function WeekView({
                               <Check size={12} strokeWidth={3} aria-hidden />
                             </span>
                           ) : null}
+                          {(meal.stockKeys?.length ?? 0) > 0 ? (
+                            <span
+                              className="tag tag-stock"
+                              title="Zutaten auf Lager"
+                            >
+                              Lager
+                            </span>
+                          ) : null}
+                          <MealEmoteControl day={slot.day} meal={meal} />
                           {pitching ? (
                             <button
                               type="button"
@@ -1365,7 +1746,10 @@ function WeekView({
                               aria-label="Gericht löschen"
                               onClick={(e) => {
                                 e.stopPropagation()
-                                removeMeal(slot.day, meal.id)
+                                const item = e.currentTarget.closest(
+                                  '.day-meal-item',
+                                ) as HTMLElement | null
+                                removeMealWithBurst(slot.day, meal.id, item)
                               }}
                             >
                               <Trash2 size={16} aria-hidden />
@@ -1378,11 +1762,9 @@ function WeekView({
                               {(() => {
                                 const cat = resolveRecipeCategory(recipe)
                                 return (
-                                  <span
-                                    className={`tag tag-cat tag-cat-${cat}`}
-                                  >
+                                  <span className={categoryTagClass(cat)}>
                                     <CategoryIcon category={cat} size={13} />
-                                    {CATEGORY_LABEL[cat]}
+                                    {categoryLabel(cat, customCategories)}
                                   </span>
                                 )
                               })()}
@@ -1392,7 +1774,16 @@ function WeekView({
                                   Basis
                                 </span>
                               ) : null}
-                              {recipe.tags.map((t) => (
+                              {sanitizeRecipeTags(recipe.tags, {
+                                category: resolveRecipeCategory(recipe),
+                                categoryLabel: categoryLabel(
+                                  resolveRecipeCategory(recipe),
+                                  customCategories,
+                                ),
+                                hasCookidoo: Boolean(
+                                  recipe.cookidooUrl || recipe.cookidooId,
+                                ),
+                              }).map((t) => (
                                 <span
                                   key={`${meal.id}-m-${t}`}
                                   className={`tag ${tagToneClass(t)}`}
@@ -1407,15 +1798,23 @@ function WeekView({
                               {(() => {
                                 const cat = resolveRecipeCategory(sideRecipe)
                                 return (
-                                  <span
-                                    className={`tag tag-cat tag-cat-${cat}`}
-                                  >
+                                  <span className={categoryTagClass(cat)}>
                                     <CategoryIcon category={cat} size={13} />
-                                    {CATEGORY_LABEL[cat]}
+                                    {categoryLabel(cat, customCategories)}
                                   </span>
                                 )
                               })()}
-                              {sideRecipe.tags.map((t) => (
+                              {sanitizeRecipeTags(sideRecipe.tags, {
+                                category: resolveRecipeCategory(sideRecipe),
+                                categoryLabel: categoryLabel(
+                                  resolveRecipeCategory(sideRecipe),
+                                  customCategories,
+                                ),
+                                hasCookidoo: Boolean(
+                                  sideRecipe.cookidooUrl ||
+                                    sideRecipe.cookidooId,
+                                ),
+                              }).map((t) => (
                                 <span
                                   key={`${meal.id}-s-${t}`}
                                   className={`tag ${tagToneClass(t)}`}
@@ -1469,7 +1868,7 @@ function WeekView({
           }
           onRemoveMeal={
             pitching
-              ? (mealId) => removeMeal(detailDay, mealId)
+              ? (mealId) => removeMeal(detailDay, mealId, activeWeekId)
               : undefined
           }
         />
@@ -1486,7 +1885,10 @@ function WeekView({
 
       {pickingDay && pitching ? (
         <div className="modal-backdrop" onClick={closePicker}>
-          <div className="modal stack" onClick={(e) => e.stopPropagation()}>
+          <div
+            className="modal stack fx-pop-in meal-picker-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="section-head">
               <h2>
                 {pendingBase
@@ -1511,24 +1913,77 @@ function WeekView({
                 <p className="muted tiny">
                   Beilage wählen oder ohne Beilage übernehmen.
                 </p>
-                {sideRecipes.map((r) => (
+                <div
+                  className="category-filters"
+                  role="tablist"
+                  aria-label="Beilagen-Kategorien"
+                >
                   <button
-                    key={r.id}
                     type="button"
-                    className="btn secondary"
-                    onClick={() => {
-                      assignSlot(pickingDay, {
-                        recipeId: pendingBase.recipeId,
-                        title: pendingBase.title,
-                        sideRecipeId: r.id,
-                        sideTitle: r.title,
-                      })
-                      closePicker()
-                    }}
+                    role="tab"
+                    aria-selected={pickerFilter === 'all'}
+                    className={`chip-filter chip-cat-all${pickerFilter === 'all' ? ' active' : ''}`}
+                    onClick={() => setPickerFilter('all')}
                   >
-                    {r.title}
+                    <AllCategoriesIcon size={15} />
+                    Alle ({sideRecipes.length})
                   </button>
-                ))}
+                  {pickerCategories.map((c) => {
+                    const count = sideRecipes.filter(
+                      (r) => resolveRecipeCategory(r) === c.id,
+                    ).length
+                    if (!count) return null
+                    return (
+                      <button
+                        key={c.id}
+                        type="button"
+                        role="tab"
+                        aria-selected={pickerFilter === c.id}
+                        className={categoryChipClass(
+                          c.id,
+                          pickerFilter === c.id,
+                        )}
+                        onClick={() => setPickerFilter(c.id)}
+                      >
+                        <CategoryIcon category={c.id} size={15} />
+                        {c.label} ({count})
+                      </button>
+                    )
+                  })}
+                </div>
+                {pickerSideRecipes.length === 0 ? (
+                  <p className="muted">Keine Beilagen in dieser Kategorie.</p>
+                ) : (
+                  <div className="meal-picker-list">
+                    {pickerSideRecipes.map((r) => {
+                      const cat = resolveRecipeCategory(r)
+                      return (
+                        <button
+                          key={r.id}
+                          type="button"
+                          className="btn secondary meal-picker-item"
+                          onClick={() => {
+                            assignSlot(pickingDay, {
+                              recipeId: pendingBase.recipeId,
+                              title: pendingBase.title,
+                              sideRecipeId: r.id,
+                              sideTitle: r.title,
+                            })
+                            closePicker()
+                          }}
+                        >
+                          <span className="meal-picker-item-title">
+                            {r.title}
+                          </span>
+                          <span className={categoryTagClass(cat)}>
+                            <CategoryIcon category={cat} size={13} />
+                            {categoryLabel(cat, customCategories)}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
                 <button
                   type="button"
                   className="btn"
@@ -1545,57 +2000,121 @@ function WeekView({
               </>
             ) : (
               <>
-                <p className="muted tiny">Aus Pitches</p>
-                {pitches.length === 0 ? (
-                  <p className="muted">Noch keine Pitches — erst vorschlagen.</p>
-                ) : (
-                  pitches.map((p) => {
-                    const alreadyInPlan = assignedPitchIds.has(p.id)
+                <div
+                  className="category-filters"
+                  role="tablist"
+                  aria-label="Rezept-Kategorien"
+                >
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={pickerFilter === 'all'}
+                    className={`chip-filter chip-cat-all${pickerFilter === 'all' ? ' active' : ''}`}
+                    onClick={() => setPickerFilter('all')}
+                  >
+                    <AllCategoriesIcon size={15} />
+                    Alle ({mainRecipes.length})
+                  </button>
+                  {pitches.length > 0 ? (
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={pickerFilter === 'pitches'}
+                      className={`chip-filter chip-cat-pitches${pickerFilter === 'pitches' ? ' active' : ''}`}
+                      onClick={() => setPickerFilter('pitches')}
+                    >
+                      Pitches ({pitches.length})
+                    </button>
+                  ) : null}
+                  {pickerCategories.map((c) => {
+                    const count = mainRecipes.filter(
+                      (r) => resolveRecipeCategory(r) === c.id,
+                    ).length
+                    if (!count && c.builtin) return null
+                    if (!count && !c.builtin) return null
                     return (
                       <button
-                        key={p.id}
+                        key={c.id}
                         type="button"
-                        className={`btn secondary${alreadyInPlan ? ' pitch-assigned' : ''}`}
-                        onClick={() => {
-                          assignSlot(pickingDay, {
-                            recipeId: p.recipeId,
-                            title: p.title,
-                            sideRecipeId: p.sideRecipeId,
-                            sideTitle: p.sideTitle,
-                            fromPitchId: p.id,
-                          })
-                          closePicker()
-                        }}
+                        role="tab"
+                        aria-selected={pickerFilter === c.id}
+                        className={categoryChipClass(
+                          c.id,
+                          pickerFilter === c.id,
+                        )}
+                        onClick={() => setPickerFilter(c.id)}
                       >
-                        {mealLabel(p.title, p.sideTitle)}
-                        {alreadyInPlan ? ' · schon im Plan' : ''}
+                        <CategoryIcon category={c.id} size={15} />
+                        {c.label} ({count})
                       </button>
                     )
-                  })
+                  })}
+                </div>
+
+                {pickerFilter === 'pitches' ? (
+                  pitches.length === 0 ? (
+                    <p className="muted">Noch keine Pitches — erst vorschlagen.</p>
+                  ) : (
+                    <div className="meal-picker-list">
+                      {pitches.map((p) => {
+                        const alreadyInPlan = assignedPitchIds.has(p.id)
+                        return (
+                          <button
+                            key={p.id}
+                            type="button"
+                            className={`btn secondary meal-picker-item${alreadyInPlan ? ' pitch-assigned' : ''}`}
+                            onClick={() => {
+                              assignSlot(pickingDay, {
+                                recipeId: p.recipeId,
+                                title: p.title,
+                                sideRecipeId: p.sideRecipeId,
+                                sideTitle: p.sideTitle,
+                                fromPitchId: p.id,
+                              })
+                              closePicker()
+                            }}
+                          >
+                            <span className="meal-picker-item-title">
+                              {mealLabel(p.title, p.sideTitle)}
+                              {alreadyInPlan ? ' · schon im Plan' : ''}
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )
+                ) : pickerRecipes.length === 0 ? (
+                  <p className="muted">
+                    {pickerFilter === 'side'
+                      ? 'Beilagen wählst du nach einer Basis (z. B. Reis oder Nudeln).'
+                      : 'Keine Rezepte in dieser Kategorie.'}
+                  </p>
+                ) : (
+                  <div className="meal-picker-list">
+                    {pickerRecipes.map((r) => {
+                      const cat = resolveRecipeCategory(r)
+                      const isBase =
+                        (r.kind ?? 'meal') === 'base' || cat === 'base'
+                      return (
+                        <button
+                          key={r.id}
+                          type="button"
+                          className="btn secondary meal-picker-item"
+                          onClick={() => pickRecipeForDay(r)}
+                        >
+                          <span className="meal-picker-item-title">
+                            {r.title}
+                            {isBase ? ' · danach Beilage' : ''}
+                          </span>
+                          <span className={categoryTagClass(cat)}>
+                            <CategoryIcon category={cat} size={13} />
+                            {categoryLabel(cat, customCategories)}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
                 )}
-                <div className="divider" />
-                <p className="muted tiny">Basis / Gerichte</p>
-                {mainRecipes.map((r) => (
-                  <button
-                    key={r.id}
-                    type="button"
-                    className="btn secondary"
-                    onClick={() => {
-                      if ((r.kind ?? 'meal') === 'base') {
-                        setPendingBase({ recipeId: r.id, title: r.title })
-                      } else {
-                        assignSlot(pickingDay, {
-                          recipeId: r.id,
-                          title: r.title,
-                        })
-                        closePicker()
-                      }
-                    }}
-                  >
-                    {r.title}
-                    {(r.kind ?? 'meal') === 'base' ? ' · Basis' : ''}
-                  </button>
-                ))}
               </>
             )}
           </div>
@@ -1607,6 +2126,7 @@ function WeekView({
 
 function PitchView() {
   const currentUser = useStore((s) => s.currentUser)!
+  const profiles = useStore((s) => s.settings.profiles)
   const recipes = useStore((s) => s.recipes)
   const allPitches = useStore((s) => s.pitches)
   const activeWeekId = useStore((s) => s.activeWeekId)
@@ -1627,6 +2147,8 @@ function PitchView() {
     () => allPitches.filter((p) => p.weekId === activeWeekId),
     [allPitches, activeWeekId],
   )
+  const pitchIds = useMemo(() => pitches.map((p) => p.id), [pitches])
+  const freshPitches = useJustAppeared(pitchIds)
   const week = useMemo(
     () => weeks.find((w) => w.id === activeWeekId),
     [weeks, activeWeekId],
@@ -1784,13 +2306,16 @@ function PitchView() {
       ) : null}
 
       {pitches.map((p) => (
-          <article key={p.id} className="pitch-card">
+          <article
+            key={p.id}
+            className={`pitch-card${freshPitches.has(p.id) ? ' fx-pop-in' : ''}`}
+          >
             <div className="row">
               <Avatar userId={p.pitchedBy} />
               <div className="grow">
                 <h3>{mealLabel(p.title, p.sideTitle)}</h3>
                 <p className="muted tiny">
-                  von {USERS[p.pitchedBy].name}
+                  von {resolveUser(p.pitchedBy, profiles).name}
                   {p.sideTitle || p.sideRecipeId ? ' · Basis + Beilage' : ''}
                   {p.recipeId || p.poolRecipeId ? ' · Rezept verknüpft' : ''}
                 </p>
@@ -1800,7 +2325,12 @@ function PitchView() {
                   type="button"
                   className="btn ghost sm icon-delete"
                   aria-label={`Pitch „${mealLabel(p.title, p.sideTitle)}“ löschen`}
-                  onClick={() => deletePitch(p.id)}
+                  onClick={(e) => {
+                    const card = e.currentTarget.closest(
+                      '.pitch-card',
+                    ) as HTMLElement | null
+                    playBurstExit(card, () => deletePitch(p.id, activeWeekId))
+                  }}
                 >
                   <Trash2 size={16} aria-hidden />
                 </button>
@@ -1843,7 +2373,7 @@ function PitchView() {
               {(['darius', 'wendy'] as UserId[]).map((uid) =>
                 p.reactions[uid] ? (
                   <span key={uid} className="tag green">
-                    {USERS[uid].name}: {p.reactions[uid]}
+                    {resolveUser(uid, profiles).name}: {p.reactions[uid]}
                   </span>
                 ) : null,
               )}
@@ -1857,6 +2387,12 @@ function PitchView() {
 function RecipesView() {
   const recipes = useStore((s) => s.recipes)
   const settings = useStore((s) => s.settings)
+  const customCategories = settings.customCategories ?? []
+  const profiles = settings.profiles
+  const allCategories = useMemo(
+    () => listRecipeCategories(customCategories),
+    [customCategories],
+  )
   const weeks = useStore((s) => s.weeks)
   const activeWeekId = useStore((s) => s.activeWeekId)
   const addRecipe = useStore((s) => s.addRecipe)
@@ -1864,12 +2400,19 @@ function RecipesView() {
   const duplicateRecipe = useStore((s) => s.duplicateRecipe)
   const deleteRecipe = useStore((s) => s.deleteRecipe)
   const restoreRecipe = useStore((s) => s.restoreRecipe)
+  const purgeRecipeReferences = useStore((s) => s.purgeRecipeReferences)
+  const addCustomCategory = useStore((s) => s.addCustomCategory)
+  const removeCustomCategory = useStore((s) => s.removeCustomCategory)
   const [formOpen, setFormOpen] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [detailId, setDetailId] = useState<string | null>(null)
   const [browseOpen, setBrowseOpen] = useState(false)
   const [browseFlash, setBrowseFlash] = useState<string | null>(null)
   const [flash, setFlash] = useState<string | null>(null)
+  const [catModalOpen, setCatModalOpen] = useState(false)
+  const [catMenuId, setCatMenuId] = useState<string | null>(null)
+  const [newCatLabel, setNewCatLabel] = useState('')
+  const [newCatKind, setNewCatKind] = useState<'meal' | 'base' | 'side'>('meal')
   const [title, setTitle] = useState('')
   const [kind, setKind] = useState<'meal' | 'base' | 'side'>('meal')
   const [category, setCategory] = useState<RecipeCategory>('main')
@@ -1877,9 +2420,16 @@ function RecipesView() {
   const [categoryFilter, setCategoryFilter] = useState<RecipeCategory | 'all'>(
     'all',
   )
+  /** Empty = all category sections collapsed (default). */
+  const [openCats, setOpenCats] = useState<Set<RecipeCategory>>(() => new Set())
+  const recipeIds = useMemo(() => recipes.map((r) => r.id), [recipes])
+  const freshRecipes = useJustAppeared(recipeIds)
   const [ingredients, setIngredients] = useState('')
   const [notes, setNotes] = useState('')
   const [cookidooUrl, setCookidooUrl] = useState('')
+  const [cookFetchBusy, setCookFetchBusy] = useState(false)
+  const [cookFetchHint, setCookFetchHint] = useState<string | null>(null)
+  const cookFetchLastRef = useRef('')
   const [undo, setUndo] = useState<{
     recipe: (typeof recipes)[number]
     index: number
@@ -1920,11 +2470,59 @@ function RecipesView() {
       if (list) list.push(r)
       else map.set(cat, [r])
     }
-    return RECIPE_CATEGORIES.map((c) => ({
+    const known = allCategories.map((c) => ({
       ...c,
       items: map.get(c.id) ?? [],
-    })).filter((g) => g.items.length > 0)
-  }, [recipes, categoryFilter])
+    }))
+    const knownIds = new Set(allCategories.map((c) => c.id))
+    const orphans = [...map.entries()]
+      .filter(([id]) => !knownIds.has(id))
+      .map(([id, items]) => ({
+        id,
+        label: categoryLabel(id, customCategories) || id,
+        hint: 'Ehemalige Kategorie',
+        builtin: false,
+        kind: 'meal' as const,
+        items,
+      }))
+    return [...known, ...orphans].filter((g) => g.items.length > 0)
+  }, [recipes, categoryFilter, allCategories, customCategories])
+
+  useEffect(() => {
+    if (categoryFilter === 'all') {
+      setOpenCats(new Set())
+    } else {
+      setOpenCats(new Set([categoryFilter]))
+    }
+  }, [categoryFilter])
+
+  useEffect(() => {
+    if (!catMenuId) return
+    const onDoc = (e: PointerEvent) => {
+      const t = e.target
+      if (!(t instanceof Element)) return
+      if (t.closest(`[data-cat-menu="${catMenuId}"]`)) return
+      setCatMenuId(null)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setCatMenuId(null)
+    }
+    document.addEventListener('pointerdown', onDoc)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('pointerdown', onDoc)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [catMenuId])
+
+  const toggleCatOpen = (id: RecipeCategory) => {
+    setOpenCats((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
 
   const clearUndoTimers = () => {
     if (undoTimerRef.current) {
@@ -1938,6 +2536,8 @@ function RecipesView() {
   }
 
   const finalizePendingDelete = () => {
+    const pending = pendingUndoRef.current
+    if (pending) purgeRecipeReferences(pending.recipe.id)
     pendingUndoRef.current = null
     clearUndoTimers()
     setUndo(null)
@@ -1947,50 +2547,61 @@ function RecipesView() {
     const pending = pendingUndoRef.current
     if (!pending) return
     restoreRecipe(pending.recipe, pending.index)
-    finalizePendingDelete()
+    pendingUndoRef.current = null
+    clearUndoTimers()
+    setUndo(null)
     setFlash(`„${pending.recipe.title}“ wiederhergestellt`)
   }
 
-  const requestDelete = (recipe: (typeof recipes)[number]) => {
-    // Commit any previous pending delete first.
-    if (pendingUndoRef.current) {
-      pendingUndoRef.current = null
+  const requestDelete = (
+    recipe: (typeof recipes)[number],
+    el?: HTMLElement | null,
+  ) => {
+    const run = () => {
+      // Commit any previous pending delete first.
+      if (pendingUndoRef.current) {
+        finalizePendingDelete()
+      }
+      const index = recipes.findIndex((r) => r.id === recipe.id)
+      const removed = deleteRecipe(recipe.id)
+      if (!removed) return
+      if (detailId === recipe.id) setDetailId(null)
+      if (editingId === recipe.id) {
+        setFormOpen(false)
+        setEditingId(null)
+      }
+      pendingUndoRef.current = { recipe: removed, index: index < 0 ? 0 : index }
+      setUndo({
+        recipe: removed,
+        index: index < 0 ? 0 : index,
+        secondsLeft: 5,
+      })
       clearUndoTimers()
+      undoTickRef.current = setInterval(() => {
+        setUndo((prev) =>
+          prev
+            ? { ...prev, secondsLeft: Math.max(0, prev.secondsLeft - 1) }
+            : prev,
+        )
+      }, 1000)
+      undoTimerRef.current = setTimeout(() => {
+        finalizePendingDelete()
+      }, 5000)
     }
-    const index = recipes.findIndex((r) => r.id === recipe.id)
-    const removed = deleteRecipe(recipe.id)
-    if (!removed) return
-    if (detailId === recipe.id) setDetailId(null)
-    if (editingId === recipe.id) {
-      setFormOpen(false)
-      setEditingId(null)
-    }
-    pendingUndoRef.current = { recipe: removed, index: index < 0 ? 0 : index }
-    setUndo({
-      recipe: removed,
-      index: index < 0 ? 0 : index,
-      secondsLeft: 5,
-    })
-    clearUndoTimers()
-    undoTickRef.current = setInterval(() => {
-      setUndo((prev) =>
-        prev
-          ? { ...prev, secondsLeft: Math.max(0, prev.secondsLeft - 1) }
-          : prev,
-      )
-    }, 1000)
-    undoTimerRef.current = setTimeout(() => {
-      finalizePendingDelete()
-    }, 5000)
+    if (el) playBurstExit(el, run)
+    else run()
   }
 
   useEffect(() => {
     return () => {
-      // Leaving the view keeps the delete (already applied).
+      // Leaving the view: keep the delete and purge week/pitch refs.
+      if (pendingUndoRef.current) {
+        purgeRecipeReferences(pendingUndoRef.current.recipe.id)
+      }
       clearUndoTimers()
       pendingUndoRef.current = null
     }
-  }, [])
+  }, [purgeRecipeReferences])
 
   const resetForm = () => {
     setEditingId(null)
@@ -2001,6 +2612,9 @@ function RecipesView() {
     setIngredients('')
     setNotes('')
     setCookidooUrl('')
+    setCookFetchBusy(false)
+    setCookFetchHint(null)
+    cookFetchLastRef.current = ''
   }
 
   const openCreate = () => {
@@ -2013,8 +2627,14 @@ function RecipesView() {
     setTitle(recipe.title)
     const cat = resolveRecipeCategory(recipe)
     setCategory(cat)
-    setKind(recipe.kind ?? kindFromCategory(cat))
-    setTags(recipe.tags.join(', '))
+    setKind(recipe.kind ?? kindFromCategoryWithCustom(cat, customCategories))
+    setTags(
+      sanitizeRecipeTags(recipe.tags, {
+        category: cat,
+        categoryLabel: categoryLabel(cat, customCategories),
+        hasCookidoo: Boolean(recipe.cookidooUrl || recipe.cookidooId),
+      }).join(', '),
+    )
     setIngredients(
       recipe.ingredients
         .map((i) => (i.amount ? `${i.amount} ${i.name}` : i.name))
@@ -2022,6 +2642,8 @@ function RecipesView() {
     )
     setNotes(recipe.notes ?? '')
     setCookidooUrl(recipe.cookidooUrl ?? '')
+    cookFetchLastRef.current = recipe.cookidooUrl?.trim() ?? ''
+    setCookFetchHint(null)
     setFormOpen(true)
   }
 
@@ -2038,16 +2660,108 @@ function RecipesView() {
         return { name: line }
       })
 
+  const looksLikeCookidooRef = (value: string) => {
+    const v = value.trim()
+    if (!v) return false
+    return /cookidoo\./i.test(v) || /\br\d{3,}\b/i.test(v)
+  }
+
+  const loadFromCookidooLink = async (rawUrl?: string, force = false) => {
+    const ref = (rawUrl ?? cookidooUrl).trim()
+    if (!ref || !looksLikeCookidooRef(ref)) {
+      setCookFetchHint('Bitte einen Cookidoo-Link oder eine Rezept-ID (z. B. r505099) einfügen.')
+      return
+    }
+    if (!settings.cookidoo.enabled || !settings.cookidoo.linked || !settings.cookidoo.cookies) {
+      setCookFetchHint('Cookidoo zuerst unter Einstellungen verknüpfen — dann lassen sich Zutaten laden.')
+      return
+    }
+    if (cookFetchBusy) return
+    if (!force && cookFetchLastRef.current === ref && ingredients.trim()) {
+      return
+    }
+    setCookFetchBusy(true)
+    setCookFetchHint('Lade Zutaten von Cookidoo …')
+    try {
+      const res = await importCookidooRecipeApi({
+        cookies: settings.cookidoo.cookies,
+        recipe: ref,
+        country: settings.cookidoo.country || 'de',
+      })
+      if (!res.ok || !res.recipe) {
+        setCookFetchHint(res.message || 'Cookidoo-Rezept konnte nicht geladen werden.')
+        return
+      }
+      const r = res.recipe
+      if (!editingId || !title.trim()) setTitle(r.title)
+
+      const ingText = (r.ingredients || [])
+        .map((i) => (i.amount ? `${i.amount} ${i.name}` : i.name))
+        .join('\n')
+      if (ingText) setIngredients(ingText)
+      if (r.notes && (!notes.trim() || !editingId)) setNotes(r.notes)
+      if (r.cookidooUrl) setCookidooUrl(r.cookidooUrl)
+
+      const cat = r.category
+      if (
+        cat &&
+        allCategories.some((c) => c.id === cat) &&
+        (!editingId || category === 'main')
+      ) {
+        setCategory(cat as RecipeCategory)
+        setKind(kindFromCategoryWithCustom(cat as RecipeCategory, customCategories))
+      }
+
+      const resolvedCat =
+        cat && allCategories.some((c) => c.id === cat)
+          ? (cat as RecipeCategory)
+          : category
+      const tagSet = new Set(
+        sanitizeRecipeTags(
+          [
+            ...tags.split(',').map((t) => t.trim()),
+            'cookidoo',
+            ...(r.tags || []),
+          ],
+          {
+            category: resolvedCat,
+            categoryLabel: categoryLabel(resolvedCat, customCategories),
+            hasCookidoo: true,
+          },
+        ),
+      )
+      setTags([...tagSet].join(', '))
+
+      cookFetchLastRef.current = r.cookidooUrl || ref
+      setCookFetchHint(
+        `${(r.ingredients || []).length} Zutaten geladen — bei Bedarf anpassen und speichern.`,
+      )
+    } catch (err) {
+      setCookFetchHint(
+        err instanceof Error ? err.message : 'Cookidoo-Laden fehlgeschlagen.',
+      )
+    } finally {
+      setCookFetchBusy(false)
+    }
+  }
+
   const saveForm = () => {
     if (!title.trim()) return
     const payload = {
       title: title.trim(),
       category,
-      kind: kindFromCategory(category),
-      tags: tags
-        .split(',')
-        .map((t) => t.trim())
-        .filter(Boolean),
+      kind: kindFromCategoryWithCustom(category, customCategories),
+      tags: sanitizeRecipeTags(
+        tags
+          .split(',')
+          .map((t) => t.trim())
+          .filter(Boolean),
+        {
+          category,
+          categoryLabel: categoryLabel(category, customCategories),
+          hasCookidoo: Boolean(cookidooUrl.trim()),
+        },
+      ),
       ingredients: parseIngredients(),
       notes: notes.trim() || undefined,
       cookidooUrl: cookidooUrl.trim() || undefined,
@@ -2078,7 +2792,20 @@ function RecipesView() {
         </div>
         <div className="row wrap">
           <button type="button" className="btn sm" onClick={openCreate}>
-            Neu
+            <Plus size={16} aria-hidden />
+            Neues Rezept
+          </button>
+          <button
+            type="button"
+            className="btn sm secondary"
+            onClick={() => {
+              setNewCatLabel('')
+              setNewCatKind('meal')
+              setCatModalOpen(true)
+            }}
+          >
+            <Plus size={16} aria-hidden />
+            Kategorie
           </button>
           {settings.cookidoo.enabled ? (
             <button
@@ -2102,18 +2829,18 @@ function RecipesView() {
             <AllCategoriesIcon size={15} />
             Alle ({recipes.length})
           </button>
-          {RECIPE_CATEGORIES.map((c) => {
+          {allCategories.map((c) => {
             const count = recipes.filter(
               (r) => resolveRecipeCategory(r) === c.id,
             ).length
-            if (!count) return null
+            if (!count && c.builtin) return null
             return (
               <button
                 key={c.id}
                 type="button"
                 role="tab"
                 aria-selected={categoryFilter === c.id}
-                className={`chip-filter chip-cat-${c.id}${categoryFilter === c.id ? ' active' : ''}`}
+                className={categoryChipClass(c.id, categoryFilter === c.id)}
                 onClick={() => setCategoryFilter(c.id)}
               >
                 <CategoryIcon category={c.id} size={15} />
@@ -2142,120 +2869,207 @@ function RecipesView() {
         </div>
       ) : null}
 
-      {recipeGroups.map((group) => (
-        <section key={group.id} className="recipe-category-group stack">
-          <div className="recipe-category-head">
-            <h3>
-              <CategoryIcon category={group.id} size={18} />
-              {group.label}
-            </h3>
-            <span className="muted tiny">{group.items.length}</span>
-          </div>
-          {group.items.map((r) => {
-            const onBring = recipesOnBring.has(r.id)
-            const cat = resolveRecipeCategory(r)
-            return (
-              <article
-                key={r.id}
-                className={`recipe-card clickable ${detailId === r.id ? 'open' : ''}${
-                  onBring ? ' bring-sent' : ''
-                }`}
-                role="button"
-                tabIndex={0}
-                onClick={() => setDetailId(detailId === r.id ? null : r.id)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault()
-                    setDetailId(detailId === r.id ? null : r.id)
-                  }
+      {recipeGroups.map((group) => {
+        const isOpen = openCats.has(group.id)
+        const canDelete = customCategories.some((c) => c.id === group.id)
+        return (
+          <section
+            key={group.id}
+            className={`recipe-category-group stack${isOpen ? ' open' : ' collapsed'}`}
+          >
+            <div className="recipe-category-bar">
+              <button
+                type="button"
+                className="recipe-category-head"
+                aria-expanded={isOpen}
+                onClick={() => {
+                  setCatMenuId(null)
+                  toggleCatOpen(group.id)
                 }}
               >
-                <div className="row">
-                  <div className="grow">
-                    <h3>{r.title}</h3>
-                    <p className="muted tiny">
-                      von {USERS[r.createdBy].name} · {r.ingredients.length}{' '}
-                      Zutaten
-                      {detailId === r.id ? '' : ' · tippen für Details'}
-                    </p>
-                  </div>
-                  <Avatar userId={r.createdBy} />
-                </div>
-                <div className="tags">
-                  {onBring ? (
-                    <span className="tag tag-bring">Auf Bring</span>
-                  ) : null}
-                  <span className={`tag tag-cat tag-cat-${cat}`}>
-                    <CategoryIcon category={cat} size={14} />
-                    {CATEGORY_LABEL[cat]}
-                  </span>
-                  {r.tags.map((t) => (
-                    <span key={t} className={`tag ${tagToneClass(t)}`}>
-                      {t}
-                    </span>
-                  ))}
-                  {r.cookidooUrl ? (
-                    <span className="tag tag-cookidoo">Cookidoo</span>
-                  ) : null}
-                </div>
-                {detailId === r.id ? (
-                  <>
-                    {r.notes ? <p className="muted">{r.notes}</p> : null}
-                    <IngredientList items={r.ingredients} onBring={onBring} />
-                    {r.cookidooUrl ? (
-                      <a
-                        className="tiny"
-                        href={r.cookidooUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        In Cookidoo öffnen ↗
-                      </a>
-                    ) : null}
+                <h3>
+                  {isOpen ? (
+                    <ChevronDown size={18} aria-hidden />
+                  ) : (
+                    <ChevronRight size={18} aria-hidden />
+                  )}
+                  <CategoryIcon category={group.id} size={18} />
+                  {group.label}
+                </h3>
+                <span className="muted tiny">{group.items.length}</span>
+              </button>
+              {canDelete ? (
+                <div
+                  className="recipe-category-menu"
+                  data-cat-menu={group.id}
+                >
+                  <button
+                    type="button"
+                    className="btn ghost sm recipe-category-more"
+                    aria-label={`Menü für ${group.label}`}
+                    aria-expanded={catMenuId === group.id}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setCatMenuId((id) =>
+                        id === group.id ? null : group.id,
+                      )
+                    }}
+                  >
+                    <MoreVertical size={18} aria-hidden />
+                  </button>
+                  {catMenuId === group.id ? (
                     <div
-                      className="row wrap"
-                      onClick={(e) => e.stopPropagation()}
-                      onKeyDown={(e) => e.stopPropagation()}
+                      className="recipe-category-menu-pop fx-pop-in"
+                      role="menu"
                     >
                       <button
                         type="button"
-                        className="btn sm secondary"
-                        onClick={() => openEdit(r)}
-                      >
-                        Anpassen
-                      </button>
-                      <button
-                        type="button"
-                        className="btn sm secondary"
-                        onClick={() => {
-                          const id = duplicateRecipe(r.id)
-                          if (id) {
-                            setDetailId(id)
-                            setFlash(`Kopie von „${r.title}“ angelegt`)
+                        role="menuitem"
+                        className="recipe-category-menu-item danger"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          const res = removeCustomCategory(group.id)
+                          setFlash(res.message)
+                          setCatMenuId(null)
+                          if (category === group.id) setCategory('other')
+                          if (categoryFilter === group.id) {
+                            setCategoryFilter('all')
                           }
                         }}
                       >
-                        Duplizieren
-                      </button>
-                      <button
-                        type="button"
-                        className="btn sm ghost icon-delete"
-                        aria-label={`„${r.title}“ löschen`}
-                        onClick={() => requestDelete(r)}
-                      >
-                        <Trash2 size={16} aria-hidden />
+                        <Trash2 size={15} aria-hidden />
+                        Löschen
                       </button>
                     </div>
-                  </>
-                ) : r.notes ? (
-                  <p className="muted">{r.notes}</p>
-                ) : null}
-              </article>
-            )
-          })}
-        </section>
-      ))}
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+            {isOpen
+              ? group.items.map((r) => {
+                  const onBring = recipesOnBring.has(r.id)
+                  const cat = resolveRecipeCategory(r)
+                  return (
+                    <article
+                      key={r.id}
+                      className={`recipe-card clickable ${detailId === r.id ? 'open' : ''}${
+                        onBring ? ' bring-sent' : ''
+                      }${freshRecipes.has(r.id) ? ' fx-pop-in' : ''}`}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() =>
+                        setDetailId(detailId === r.id ? null : r.id)
+                      }
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          setDetailId(detailId === r.id ? null : r.id)
+                        }
+                      }}
+                    >
+                      <div className="row">
+                        <div className="grow">
+                          <h3>{r.title}</h3>
+                          <p className="muted tiny">
+                            von {resolveUser(r.createdBy, profiles).name} ·{' '}
+                            {r.ingredients.length} Zutaten
+                            {detailId === r.id ? '' : ' · tippen für Details'}
+                          </p>
+                        </div>
+                        <Avatar userId={r.createdBy} />
+                      </div>
+                      <div className="tags">
+                        {onBring ? (
+                          <span className="tag tag-bring">Auf Bring</span>
+                        ) : null}
+                        <span className={categoryTagClass(cat)}>
+                          <CategoryIcon category={cat} size={14} />
+                          {categoryLabel(cat, customCategories)}
+                        </span>
+                        {sanitizeRecipeTags(r.tags, {
+                          category: cat,
+                          categoryLabel: categoryLabel(cat, customCategories),
+                          hasCookidoo: Boolean(r.cookidooUrl || r.cookidooId),
+                        }).map((t) => (
+                          <span key={t} className={`tag ${tagToneClass(t)}`}>
+                            {t}
+                          </span>
+                        ))}
+                        {r.cookidooUrl ? (
+                          <span className="tag tag-cookidoo">Cookidoo</span>
+                        ) : null}
+                      </div>
+                      {detailId === r.id ? (
+                        <>
+                          {r.notes ? <p className="muted">{r.notes}</p> : null}
+                          <IngredientList
+                            items={r.ingredients}
+                            onBring={onBring}
+                          />
+                          {r.cookidooUrl ? (
+                            <a
+                              className="tiny"
+                              href={r.cookidooUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              In Cookidoo öffnen ↗
+                            </a>
+                          ) : null}
+                          <div
+                            className="row wrap"
+                            onClick={(e) => e.stopPropagation()}
+                            onKeyDown={(e) => e.stopPropagation()}
+                          >
+                            <button
+                              type="button"
+                              className="btn sm secondary"
+                              onClick={() => openEdit(r)}
+                            >
+                              Anpassen
+                            </button>
+                            <button
+                              type="button"
+                              className="btn sm secondary"
+                              onClick={() => {
+                                const id = duplicateRecipe(r.id)
+                                if (id) {
+                                  setDetailId(id)
+                                  setFlash(`Kopie von „${r.title}“ angelegt`)
+                                }
+                              }}
+                            >
+                              Duplizieren
+                            </button>
+                            <button
+                              type="button"
+                              className="btn sm ghost icon-delete"
+                              aria-label={`„${r.title}“ löschen`}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                requestDelete(
+                                  r,
+                                  e.currentTarget.closest(
+                                    '.recipe-card',
+                                  ) as HTMLElement | null,
+                                )
+                              }}
+                            >
+                              <Trash2 size={16} aria-hidden />
+                            </button>
+                          </div>
+                        </>
+                      ) : r.notes ? (
+                        <p className="muted">{r.notes}</p>
+                      ) : null}
+                    </article>
+                  )
+                })
+              : null}
+          </section>
+        )
+      })}
 
       {formOpen ? (
         <div
@@ -2265,7 +3079,7 @@ function RecipesView() {
             resetForm()
           }}
         >
-          <div className="modal stack" onClick={(e) => e.stopPropagation()}>
+          <div className="modal stack fx-pop-in" onClick={(e) => e.stopPropagation()}>
             <div className="section-head">
               <h2>{editingId ? 'Rezept anpassen' : 'Neues Rezept'}</h2>
               <button
@@ -2297,18 +3111,18 @@ function RecipesView() {
                   onChange={(e) => {
                     const next = e.target.value as RecipeCategory
                     setCategory(next)
-                    setKind(kindFromCategory(next))
+                    setKind(kindFromCategoryWithCustom(next, customCategories))
                   }}
                 >
-                  {RECIPE_CATEGORIES.map((c) => (
+                  {allCategories.map((c) => (
                     <option key={c.id} value={c.id}>
-                      {c.label}
+                      {c.builtin ? c.label : `${c.label} (eigen)`}
                     </option>
                   ))}
                 </select>
               </div>
               <p className="muted tiny">
-                {RECIPE_CATEGORIES.find((c) => c.id === category)?.hint}
+                {allCategories.find((c) => c.id === category)?.hint}
               </p>
             </div>
             <div className="field">
@@ -2342,9 +3156,52 @@ function RecipesView() {
               <input
                 id="r-cookidoo"
                 value={cookidooUrl}
-                onChange={(e) => setCookidooUrl(e.target.value)}
-                placeholder="https://cookidoo.de/..."
+                onChange={(e) => {
+                  setCookidooUrl(e.target.value)
+                  setCookFetchHint(null)
+                }}
+                onPaste={(e) => {
+                  const pasted = e.clipboardData.getData('text')
+                  if (!looksLikeCookidooRef(pasted)) return
+                  // Let the paste apply, then fetch.
+                  window.setTimeout(() => {
+                    setCookidooUrl(pasted.trim())
+                    void loadFromCookidooLink(pasted.trim())
+                  }, 0)
+                }}
+                onBlur={() => {
+                  if (
+                    looksLikeCookidooRef(cookidooUrl) &&
+                    cookFetchLastRef.current !== cookidooUrl.trim()
+                  ) {
+                    void loadFromCookidooLink()
+                  }
+                }}
+                placeholder="https://cookidoo.de/.../r123 einfügen"
               />
+              <div className="row wrap" style={{ marginTop: 8, gap: 8 }}>
+                <button
+                  type="button"
+                  className="btn sm secondary"
+                  disabled={cookFetchBusy || !cookidooUrl.trim()}
+                  onClick={() => void loadFromCookidooLink(undefined, true)}
+                >
+                  {cookFetchBusy ? 'Lädt …' : 'Zutaten aus Link laden'}
+                </button>
+              </div>
+              {cookFetchHint ? (
+                <p className="muted tiny" style={{ marginTop: 6 }}>
+                  {cookFetchHint}
+                </p>
+              ) : settings.cookidoo.enabled && settings.cookidoo.linked ? (
+                <p className="muted tiny" style={{ marginTop: 6 }}>
+                  Link einfügen — Titel und Zutaten werden automatisch übernommen.
+                </p>
+              ) : settings.cookidoo.enabled ? (
+                <p className="muted tiny" style={{ marginTop: 6 }}>
+                  Zum automatischen Laden Cookidoo unter Einstellungen verknüpfen.
+                </p>
+              ) : null}
             </div>
             <button
               type="button"
@@ -2354,6 +3211,124 @@ function RecipesView() {
             >
               {editingId ? 'Änderungen speichern' : 'Speichern'}
             </button>
+          </div>
+        </div>
+      ) : null}
+
+      {catModalOpen ? (
+        <div
+          className="modal-backdrop"
+          onClick={() => setCatModalOpen(false)}
+        >
+          <div
+            className="modal stack fx-pop-in"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="section-head">
+              <h2>Eigene Kategorien</h2>
+              <button
+                type="button"
+                className="btn ghost sm"
+                onClick={() => setCatModalOpen(false)}
+              >
+                Schließen
+              </button>
+            </div>
+            <p className="muted tiny">
+              Eigene Kategorien erscheinen beim Anlegen/Bearbeiten von Rezepten
+              und in der Filterleiste.
+            </p>
+            <div className="field">
+              <label htmlFor="new-cat-label">Neue Kategorie</label>
+              <input
+                id="new-cat-label"
+                value={newCatLabel}
+                onChange={(e) => setNewCatLabel(e.target.value)}
+                placeholder="z. B. Asiatisch, Meal Prep…"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    const res = addCustomCategory({
+                      label: newCatLabel,
+                      kind: newCatKind,
+                    })
+                    setFlash(res.message)
+                    if (res.ok && res.id) {
+                      setNewCatLabel('')
+                      setCategory(res.id)
+                    }
+                  }
+                }}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="new-cat-kind">Typ</label>
+              <select
+                id="new-cat-kind"
+                value={newCatKind}
+                onChange={(e) =>
+                  setNewCatKind(e.target.value as 'meal' | 'base' | 'side')
+                }
+              >
+                <option value="meal">Gericht</option>
+                <option value="base">Basis</option>
+                <option value="side">Beilage</option>
+              </select>
+            </div>
+            <button
+              type="button"
+              className="btn"
+              disabled={!newCatLabel.trim()}
+              onClick={() => {
+                const res = addCustomCategory({
+                  label: newCatLabel,
+                  kind: newCatKind,
+                })
+                setFlash(res.message)
+                if (res.ok && res.id) {
+                  setNewCatLabel('')
+                  setCategory(res.id)
+                  setCatModalOpen(false)
+                }
+              }}
+            >
+              <Plus size={16} aria-hidden />
+              Anlegen
+            </button>
+            {customCategories.length === 0 ? (
+              <p className="muted">Noch keine eigenen Kategorien.</p>
+            ) : (
+              <ul className="custom-cat-list">
+                {customCategories.map((c) => (
+                  <li key={c.id} className="custom-cat-row">
+                    <span className={categoryTagClass(c.id)}>
+                      <CategoryIcon category={c.id} size={14} />
+                      {c.label}
+                    </span>
+                    <span className="muted tiny">
+                      {c.kind === 'base'
+                        ? 'Basis'
+                        : c.kind === 'side'
+                          ? 'Beilage'
+                          : 'Gericht'}
+                    </span>
+                    <button
+                      type="button"
+                      className="btn ghost sm icon-delete"
+                      aria-label={`„${c.label}“ löschen`}
+                      onClick={() => {
+                        const res = removeCustomCategory(c.id)
+                        setFlash(res.message)
+                        if (category === c.id) setCategory('other')
+                        if (categoryFilter === c.id) setCategoryFilter('all')
+                      }}
+                    >
+                      <Trash2 size={16} aria-hidden />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         </div>
       ) : null}
@@ -2825,8 +3800,13 @@ function syncLabel(status: SyncStatus) {
 
 function SettingsView() {
   const settings = useStore((s) => s.settings)
+  const currentUser = useStore((s) => s.currentUser)!
+  const me = useResolvedUser(currentUser)
+  const partnerId: UserId = currentUser === 'darius' ? 'wendy' : 'darius'
+  const partner = useResolvedUser(partnerId)
   const updateBring = useStore((s) => s.updateBring)
   const updateCookidoo = useStore((s) => s.updateCookidoo)
+  const updateMyProfile = useStore((s) => s.updateMyProfile)
   const linkBring = useStore((s) => s.linkBring)
   const unlinkBring = useStore((s) => s.unlinkBring)
   const linkCookidoo = useStore((s) => s.linkCookidoo)
@@ -2838,10 +3818,15 @@ function SettingsView() {
   const [cookPassword, setCookPassword] = useState('')
   const [bringBusy, setBringBusy] = useState(false)
   const [cookBusy, setCookBusy] = useState(false)
+  const [displayName, setDisplayName] = useState(me.name)
   const [status, setStatus] = useState<{ ok: boolean; message: string } | null>(
     null,
   )
   const [sync, setSync] = useState(getSyncStatus)
+
+  useEffect(() => {
+    setDisplayName(me.name)
+  }, [me.name, currentUser])
 
   useEffect(() => subscribeSync((next, detail) => {
     setSync({ status: next, detail: detail ?? '', revision: getSyncStatus().revision })
@@ -2861,11 +3846,79 @@ function SettingsView() {
   return (
     <div className="stack">
       <div className="panel stack">
+        <h2>Dein Profil</h2>
+        <p className="lede">
+          Name und Avatar gelten überall in der App — auch für {partner.name}.
+        </p>
+        <div className="row" style={{ gap: 14, alignItems: 'center' }}>
+          <Avatar userId={currentUser} size={56} />
+          <div className="grow">
+            <p className="muted tiny">Angemeldet als</p>
+            <strong>{me.name}</strong>
+          </div>
+        </div>
+        <div className="field">
+          <label htmlFor="profile-name">Anzeigename</label>
+          <input
+            id="profile-name"
+            value={displayName}
+            maxLength={32}
+            onChange={(e) => setDisplayName(e.target.value)}
+            onBlur={() => {
+              if (displayName.trim() === me.name) return
+              const res = updateMyProfile({ name: displayName })
+              setStatus(res)
+              if (!res.ok) setDisplayName(me.name)
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                ;(e.target as HTMLInputElement).blur()
+              }
+            }}
+            placeholder="Dein Name"
+          />
+        </div>
+        <div className="field">
+          <span className="muted tiny">Avatar-Emoji</span>
+          <div className="avatar-emoji-grid" role="listbox" aria-label="Avatar wählen">
+            <button
+              type="button"
+              role="option"
+              aria-selected={!me.emoji}
+              className={`avatar-emoji-option${!me.emoji ? ' active' : ''}`}
+              title="Buchstabe"
+              onClick={() => {
+                const res = updateMyProfile({ emoji: '' })
+                setStatus(res)
+              }}
+            >
+              {me.short}
+            </button>
+            {AVATAR_EMOJIS.map((emoji) => (
+              <button
+                key={emoji}
+                type="button"
+                role="option"
+                aria-selected={me.emoji === emoji}
+                className={`avatar-emoji-option${me.emoji === emoji ? ' active' : ''}`}
+                onClick={() => {
+                  const res = updateMyProfile({ emoji })
+                  setStatus(res)
+                }}
+              >
+                {emoji}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="panel stack">
         <h2>Gemeinsamer Speicher</h2>
         <p className="lede">
           Auf dem Webspace liegen Rezepte, Pitches und der Wochenplan in einer
-          mitgelieferten <strong>SQLite</strong>-Datei — Daryoush und Wendi sehen
-          denselben Stand. Lokal ohne PHP nur im Browser.
+          mitgelieferten <strong>SQLite</strong>-Datei — {me.name} und{' '}
+          {partner.name} sehen denselben Stand. Lokal ohne PHP nur im Browser.
         </p>
         <div
           className={`flash ${sync.status === 'online' || sync.status === 'saving' ? '' : sync.status === 'offline' ? '' : 'bad'}`}
@@ -3232,7 +4285,7 @@ function SplashScreen({ onDone }: { onDone: () => void }) {
 export default function App() {
   const currentUser = useStore((s) => s.currentUser)
   const bringEnabled = useStore((s) => s.settings.bring.enabled)
-  const [tab, setTab] = useState<Tab>('week')
+  const [tab, setTab] = useState<Tab>(() => readStoredTab())
   const [showSplash, setShowSplash] = useState(() => {
     try {
       return sessionStorage.getItem('wochenkochen-splash') !== '1'
@@ -3240,6 +4293,10 @@ export default function App() {
       return true
     }
   })
+
+  useEffect(() => {
+    writeStoredTab(tab)
+  }, [tab])
 
   useEffect(() => {
     if (!bringEnabled && tab === 'shop') setTab('week')

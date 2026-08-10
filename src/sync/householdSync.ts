@@ -5,8 +5,12 @@ import {
   saveHousehold,
   type HouseholdState,
 } from '../api/store'
-import { normalizeWeeks, repairRecipeCookidooLinks } from '../data/seed'
-import { repairRecipeCategories } from '../data/categories'
+import { normalizeWeeks, normalizeProfiles, repairRecipeCookidooLinks } from '../data/seed'
+import {
+  normalizeCustomCategories,
+  repairRecipeCategories,
+  repairRecipeTags,
+} from '../data/categories'
 import { useStore } from '../store'
 
 export type SyncStatus =
@@ -73,9 +77,11 @@ function applyRemote(state: HouseholdState, nextRevision: number) {
   const local = useStore.getState()
   const remoteSettings = (state.settings as AppSettings) ?? local.settings
   useStore.setState({
-    recipes: repairRecipeCategories(
-      repairRecipeCookidooLinks(
-        ((state.recipes as Recipe[]) ?? local.recipes) as Recipe[],
+    recipes: repairRecipeTags(
+      repairRecipeCategories(
+        repairRecipeCookidooLinks(
+          ((state.recipes as Recipe[]) ?? local.recipes) as Recipe[],
+        ),
       ),
     ),
     pitches: (state.pitches as Pitch[]) ?? [],
@@ -86,6 +92,12 @@ function applyRemote(state: HouseholdState, nextRevision: number) {
     shoppingDraft: (state.shoppingDraft as ShoppingItem[]) ?? [],
     settings: {
       ...remoteSettings,
+      customCategories: normalizeCustomCategories(
+        remoteSettings.customCategories ?? local.settings.customCategories,
+      ),
+      profiles: normalizeProfiles(
+        remoteSettings.profiles ?? local.settings.profiles,
+      ),
       bring: {
         ...remoteSettings.bring,
         // Keep ephemeral local diagnostics; never resurrect remote lastError.

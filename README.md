@@ -1,120 +1,117 @@
-# Wochenkochen / Wochenmahl
+# Wochenmahl
 
-Mobile-first Wochenplaner für **Daryoush & Wendi**.
+**Gemeinsam die Woche kochen — ohne Zettelchaos.**
 
-Ablauf: Gerichte **pitchen** → **planen** → **Woche festnageln** → Einkaufsliste bearbeiten → optional an **Bring!** senden. Optional **Cookidoo** verknüpfen, suchen und Rezepte importieren.
+Wochenmahl ist eure kleine App für den Wochenplan: Ideen vorschlagen, Gerichte eintragen, die Woche festmachen und die Einkaufsliste (optional) direkt an **Bring!** schicken. Rezepte könnt ihr selbst anlegen oder — wenn ihr möchtet — aus **Cookidoo** holen.
 
-- **GitHub:** https://github.com/DaryoushDjavadi/Wochenmahl (`main`)
-- **Live:** https://media-acht.de/Wochenessen/
-
----
-
-## Webspace hochladen
-
-Fertige Site liegt in `www/` (kein `dist/`).
-
-1. `npm run build` (oder fertigen Stand von `main` nehmen)
-2. **Inhalt** von `www/` nach `…/Wochenessen/` hochladen (SFTP/FTP)
-3. SQLite-Datei `api/data/wochenmahl.sqlite` **nicht überschreiben/löschen**
-
-```
-index.html
-favicon.svg
-assets/
-api/bring.php
-api/cookidoo.php
-api/store.php
-api/data/.htaccess
-api/data/.gitignore
-```
-
-**Host-Voraussetzungen:** PHP mit **curl** und **PDO_SQLite**.  
-Die DB wird automatisch unter `api/data/wochenmahl.sqlite` angelegt (Zugriff per `.htaccess` blockiert).
+- **App öffnen:** [media-acht.de/Wochenessen](https://media-acht.de/Wochenessen/)
+- **Code:** [GitHub · Wochenmahl](https://github.com/DaryoushDjavadi/Wochenmahl)
 
 ---
 
-## So funktioniert die App
+## Für wen ist das?
 
-| Schritt | Was |
-|--------|-----|
-| 1 | Als **Daryoush** oder **Wendi** einloggen |
-| 2 | **Pitch** — Ideen vorschlagen, mit Ja / Vielleicht / Nee reagieren. Basis (z. B. Reis) + Beilage möglich |
-| 3 | **Plan** — Tage befüllen; Tag antippen → Zutaten & Details |
-| 4 | **Woche festnageln** — Plan steht |
-| 5 | Einkaufsliste laden/bearbeiten → optional **an Bring senden** |
+Für euch beide (Daryoush & Wendi) — auf dem Handy oder am Computer. Beide sehen denselben Plan, dieselben Rezepte und denselben Einkauf, sobald jemand etwas ändert.
 
-**Oben:** Home (zurück zum Plan) · Menü (Einstellungen / Hilfe / Abmelden) · User-Chip  
-**Kalender** im Wochenkopf: andere Woche wählen (geplant / festgelegt)  
-**Unten:** Plan · Pitch · Rezepte — Tab **Bring** nur wenn Bring in den Einstellungen an ist
-
-### Rezepte
-
-- Typen: **Gericht** · **Basis** · **Beilage**
-- Neu anlegen, **Anpassen**, **Duplizieren**
-- Demo-Rezepte sind enthalten (u. a. Kokos-Kichererbsen-Curry mit korrektem Cookidoo-Link)
-
-### Cookidoo (optional)
-
-1. Menü → Einstellungen → Cookidoo an
-2. E-Mail, Passwort, Land (meist **DE**) → verknüpfen  
-   Login läuft über den Browser-**OAuth2**-Cookie-Flow (`api/cookidoo.php`)
-3. Rezepte → **Cookidoo stöbern**:
-   - **Suche** im Katalog
-   - **Meine Listen** (Konto)
-   - **Link / ID** einfügen und importieren
-
-Bei Captcha/2FA kann der Auto-Login scheitern — dann weiter per Link/ID.
-
-### Bring! (optional)
-
-1. Einstellungen → Bring an → Login → Liste wählen
-2. Erst **nach** „Woche festnageln“: Einkaufsliste → bearbeiten → **Jetzt an Bring senden**
-
-Während der Pitch-Phase wird nichts an Bring geschickt.
-
-### Gemeinsamer Speicher
-
-Auf dem PHP-Webspace teilen Daryoush & Wendi Rezepte, Pitches, Wochenplan und Einstellungen über **SQLite** (`api/store.php`).  
-Wer eingeloggt ist, bleibt **gerätelokal**. Ohne PHP (nur Vite) läuft alles im Browser-`localStorage`.
+Kein Extra-Install nötig: einfach die Website öffnen und einloggen.
 
 ---
 
-## Lokal entwickeln
+## Was kann die App?
 
-```bash
-cd wochenkochen
-npm install
-npm run dev          # http://localhost:5173
-npm run build        # schreibt www/
-```
+### Kurz gesagt
 
-Für Bring/Cookidoo/Sync lokal brauchst du PHP (oder den Webspace).
+1. **Ideen pitchen** — „Was wäre cool diese Woche?“
+2. **Woche planen** — Gerichte auf die Wochentage legen
+3. **Festnageln** — Plan steht, Einkauf wird daraus gebaut
+4. **Einkaufen** — Liste prüfen, was schon daheim ist abhaken, Rest optional an Bring senden
 
----
+### Im Detail
 
-## Technik
+| Bereich | Was ihr damit macht |
+|--------|----------------------|
+| **Plan** | Mo–So befüllen, mehrere Gerichte pro Tag, Kalender für andere Wochen |
+| **Pitch** | Vorschläge machen und mit Ja / Vielleicht / Nee abstimmen |
+| **Rezepte** | Eigene Bibliothek: Gerichte, Basis (z. B. Reis), Beilagen — inkl. eigener Kategorien |
+| **Einkauf** | Automatisch aus dem Plan; Zutaten „auf Lager“ zählen nicht mit |
+| **Bring!** | Optional: fertige Liste an eure Bring-App schicken (auch nachträglich nur das Neue) |
+| **Cookidoo** | Optional: Konto verknüpfen, suchen, Link einfügen → Zutaten laden |
+| **Profil** | Name und Emoji-Avatar in den Einstellungen |
 
-| Teil | Details |
-|------|---------|
-| Frontend | Vite + React + Zustand (`www/` Build) |
-| Sync | `api/store.php` + SQLite |
-| Bring | `api/bring.php` |
-| Cookidoo | `api/cookidoo.php` (OAuth2-Session-Cookies, Suche unter `/search/{locale}`) |
-
-**Hinweise**
-
-- Passwörter werden nicht dauerhaft gespeichert — nach erfolgreichem Link nur Session-Tokens/Cookies in den Settings
-- Bring und Cookidoo nutzen inoffizielle APIs; Vorwerk/Bring können Auth oder Endpunkte ändern
-- Mobile Layout: schmale Displays kürzen Topbar/Texte, damit Home, Menü und Kalender nicht überlappen
+Kleine Extras: Emotes unter den Gerichten, sanfte Animationen, der zuletzt geöffnete Tab bleibt nach dem Neuladen merken.
 
 ---
 
-## Aktueller Stand
+## So nutzt ihr es (ohne Technik)
 
-Branch **`main`** ist der Upload-/Deploy-Stand. Nach Änderungen:
+1. Seite öffnen → als **Daryoush** oder **Wendi** einloggen  
+2. Unten zwischen **Plan**, **Pitch** und **Rezepte** wechseln  
+3. Ideen pitchen oder direkt Gerichte in den Plan legen  
+4. Wenn die Woche passt: **Woche festnageln**  
+5. Einkaufsliste prüfen → was schon da ist antippen („Auf Lager“)  
+6. Optional: **an Bring senden**
 
-```bash
-npm run build
-git add -A && git commit && git push origin main
-# www/* → nur Ordner Wochenessen auf dem Webspace
-```
+Oben rechts: Menü mit Einstellungen, Hilfe und Abmelden.  
+Im Plan-Kopf: Kalender, um eine andere Woche zu wählen.
+
+**Tipp:** Bring und Cookidoo sind optional. Ohne Verknüpfung funktioniert der Wochenplan trotzdem.
+
+---
+
+## Was schon gut läuft
+
+- Gemeinsamer Haushalt-Speicher (beide Geräte bleiben synchron)
+- Pitch → Plan → Festnageln → Einkauf
+- Mehrere Gerichte pro Tag, Basis + Beilage
+- Eigene Kategorien für Rezepte
+- „Auf Lager“ für Zutaten, die nicht in den Einkauf sollen
+- Bring nur mit dem, was noch fehlt (kein Doppel-Spam)
+- Cookidoo-Suche und Import per Link
+- Profil mit Name & Emoji
+- Undo beim Rezept-Löschen (kurz rückgängig machen)
+
+---
+
+## Roadmap
+
+Ideen für die nächsten Schritte — Reihenfolge kann sich ändern, je nachdem, was euch wichtiger ist.
+
+### Bald
+
+- [ ] Bessere Sync-Zusammenführung (wenn beide gleichzeitig tippen)
+- [ ] Undo/Hinweise, die auch beim Tab-Wechsel bleiben
+- [ ] Portionsgröße / Personenanzahl → Zutatenmengen anpassen
+- [ ] Einkaufsliste drucken oder teilen (ohne Bring)
+
+### Später
+
+- [ ] Erinnerung: „Woche noch nicht geplant“ / „Einkauf nicht gesendet“
+- [ ] Favoriten & „oft gekocht“-Statistik
+- [ ] Mehr als zwei Personen im Haushalt
+- [ ] Als App auf dem Homescreen (PWA) mit Offline-Grundfunktionen
+- [ ] Fotos zu eigenen Rezepten
+
+### Offen / abhängig von außen
+
+- [ ] Bring- & Cookidoo-Anbindung pflegen, falls die Anbieter etwas ändern
+- [ ] Captcha/2FA bei Cookidoo eleganter abfangen
+
+Habt ihr einen Wunsch? Einfach sagen — dann wandert er nach oben auf die Liste.
+
+---
+
+## Für Technik-Interessierte
+
+Kurz und nur falls nötig:
+
+| Thema | Info |
+|------|------|
+| Frontend | Vite, React, Zustand — Build landet in `www/` |
+| Sync | PHP + SQLite auf dem Webspace (`api/store.php`) |
+| Bring / Cookidoo | PHP-Proxys (`api/bring.php`, `api/cookidoo.php`) |
+| Lokal | `npm install` → `npm run dev` → http://localhost:5173 |
+| Build | `npm run build` schreibt nach `www/` |
+
+**Webspace aktualisieren:** Inhalt von `www/` nach dem Ordner `Wochenessen` hochladen. Die Datei `api/data/wochenmahl.sqlite` **nicht löschen** — darin steckt euer gemeinsamer Stand.
+
+Passwörter von Bring/Cookidoo werden nicht dauerhaft gespeichert; nach dem Verknüpfen bleiben nur Session-Tokens in den Einstellungen.

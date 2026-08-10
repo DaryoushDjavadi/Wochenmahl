@@ -228,7 +228,7 @@ function normalize_ingredients(array $recipe): array {
  * @return array{category:string,tags:list<string>}
  */
 function extract_recipe_category_meta(array $recipe): array {
-    $tags = ['cookidoo'];
+    $tags = [];
     $labels = [];
 
     $collect = function ($node) use (&$collect, &$labels): void {
@@ -294,22 +294,65 @@ function extract_recipe_category_meta(array $recipe): array {
         }
     }
 
+    $noise = [
+        'frühling', 'fruehling', 'sommer', 'herbst', 'winter',
+        'spring', 'summer', 'autumn', 'fall',
+        'silvester', 'weihnachten', 'ostern', 'advent', 'halloween', 'neujahr',
+        'valentine', 'valentinstag', 'christmas', 'easter', 'new year', 'newyear',
+        'cookidoo', 'main', 'soup', 'salad', 'side', 'base', 'breakfast', 'dessert',
+        'snack', 'drink', 'other', 'hauptspeise', 'hauptgericht', 'suppe', 'salat',
+        'beilage', 'basis', 'frühstück', 'fruehstueck', 'nachtisch', 'getränk', 'getraenk',
+        'meal', 'dish',
+    ];
+    $noiseLookup = array_fill_keys(array_map(static function ($s) {
+        return mb_strtolower($s, 'UTF-8');
+    }, $noise), true);
+
     foreach ($labels as $label) {
-        $short = trim($label);
-        if ($short === '' || strcasecmp($short, 'cookidoo') === 0) {
+        $short = trim(preg_replace('/\s+/u', ' ', $label) ?? '');
+        if ($short === '' || mb_strlen($short, 'UTF-8') > 36) {
             continue;
         }
-        if (!in_array($short, $tags, true)) {
+        $lower = mb_strtolower($short, 'UTF-8');
+        if (isset($noiseLookup[$lower])) {
+            continue;
+        }
+        if (preg_match('/marketing\s*tag|marketingtag|rdpf\d*/iu', $short)) {
+            continue;
+        }
+        if (preg_match('/^\d+[-_]/u', $short)) {
+            continue;
+        }
+        if (preg_match('/^[0-9a-f]{8,}(-[0-9a-f]{4,})+$/iu', $short)) {
+            continue;
+        }
+        if (preg_match('/^r\d{3,}$/iu', $short) || preg_match('/^\d+$/u', $short)) {
+            continue;
+        }
+        if (preg_match('/^[a-z]{1,3}\d{2,}[-_]/iu', $short)) {
+            continue;
+        }
+        if ($lower === $category) {
+            continue;
+        }
+        $already = false;
+        foreach ($tags as $existing) {
+            if (mb_strtolower($existing, 'UTF-8') === $lower) {
+                $already = true;
+                break;
+            }
+        }
+        if (!$already) {
             $tags[] = $short;
         }
-    }
-    if ($category !== 'main' && !in_array($category, $tags, true)) {
-        $tags[] = $category;
+        if (count($tags) >= 6) {
+            break;
+        }
     }
 
     return [
         'category' => $category,
-        'tags' => array_slice($tags, 0, 12),
+        'tags' => $tags,
     ];
 }
 

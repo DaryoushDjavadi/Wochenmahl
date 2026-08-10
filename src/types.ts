@@ -5,6 +5,13 @@ export interface User {
   name: string
   short: string
   color: string
+  /** Optional emoji avatar (from settings.profiles). */
+  emoji?: string
+}
+
+export interface UserProfile {
+  name: string
+  emoji: string
 }
 
 export interface Ingredient {
@@ -12,7 +19,7 @@ export interface Ingredient {
   amount?: string
 }
 
-export type RecipeCategory =
+export type BuiltinRecipeCategory =
   | 'main'
   | 'soup'
   | 'salad'
@@ -23,6 +30,17 @@ export type RecipeCategory =
   | 'snack'
   | 'drink'
   | 'other'
+
+/** Builtin id or custom id from settings.customCategories */
+export type RecipeCategory = BuiltinRecipeCategory | (string & {})
+
+export interface CustomRecipeCategory {
+  id: string
+  label: string
+  hint?: string
+  /** How the category behaves in week pairing (default meal). */
+  kind?: 'meal' | 'base' | 'side'
+}
 
 export interface Recipe {
   id: string
@@ -70,6 +88,8 @@ export interface ShoppingItem {
   day?: Weekday
   /** Already pushed to Bring for this week (delta tracking) */
   bringSent?: boolean
+  /** Already at home — shown as „Auf Lager“, skipped for Bring */
+  inStock?: boolean
 }
 
 export interface WeekMeal {
@@ -79,6 +99,24 @@ export interface WeekMeal {
   sideRecipeId?: string
   sideTitle?: string
   fromPitchId?: string
+  /** Per-user emoji reaction for this planned meal (synced via household). */
+  emotes?: Partial<Record<UserId, MealEmote>>
+  /**
+   * Ingredients already at home — not added to Bring.
+   * Keys via ingredientStockKey('main'|'side', name).
+   */
+  stockKeys?: string[]
+}
+
+/** Fixed set of meal reactions — both users see each other's pick. */
+export const MEAL_EMOTES = ['😍', '🔥', '😋', '👍', '❤️', '🤩', '🤤'] as const
+export type MealEmote = (typeof MEAL_EMOTES)[number]
+
+export function isMealEmote(value: unknown): value is MealEmote {
+  return (
+    typeof value === 'string' &&
+    (MEAL_EMOTES as readonly string[]).includes(value)
+  )
 }
 
 export interface WeekSlot {
@@ -142,6 +180,10 @@ export interface CookidooSettings {
 export interface AppSettings {
   bring: BringSettings
   cookidoo: CookidooSettings
+  /** User-defined recipe categories (synced in household). */
+  customCategories: CustomRecipeCategory[]
+  /** Display name + emoji avatar per household member (synced). */
+  profiles: Record<UserId, UserProfile>
 }
 
 export interface AppState {
