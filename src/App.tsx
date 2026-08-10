@@ -2,14 +2,20 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   CalendarDays,
   CalendarRange,
+  Check,
   ChefHat,
   CircleHelp,
   Home,
+  Lightbulb,
+  Lock,
   Menu,
   MessageSquarePlus,
+  Pin,
   Search,
   Settings,
+  ShoppingBasket,
   ShoppingCart,
+  UtensilsCrossed,
 } from 'lucide-react'
 import {
   USERS,
@@ -1006,20 +1012,38 @@ function WeekView({
   }
 
   const pitching = week.status === 'pitching'
+  const phasePlan =
+    pitching && plannedCount === 0
+      ? 'current'
+      : !pitching || plannedCount > 0
+        ? 'done'
+        : ''
+  const phaseLock = !pitching
+    ? 'done'
+    : plannedCount > 0
+      ? 'current'
+      : 'next'
+  const phaseShop = pitching ? 'idle' : 'current'
+  const activePhase = !pitching ? 'shop' : plannedCount === 0 ? 'plan' : 'lock'
 
   return (
     <div className="stack">
-      <div className="panel week-toolbar">
+      <div className={`panel week-toolbar phase-${pitching ? 'open' : 'locked'} active-${activePhase}`}>
         <div className="week-toolbar-top">
           <div className="week-toolbar-title">
             <p className="week-toolbar-kicker">Wochenplan</p>
             <h2>{week.label}</h2>
-            <p className="week-toolbar-meta">
+            <p className={`week-toolbar-meta phase-meta-${activePhase}`}>
+              <span className={`phase-badge phase-badge-${activePhase}`}>
+                {activePhase === 'plan' && 'Planen'}
+                {activePhase === 'lock' && 'Festnageln'}
+                {activePhase === 'shop' && 'Einkaufen'}
+              </span>
               {pitching
                 ? plannedCount === 0
-                  ? 'Noch leer — Tag tippen'
-                  : `${plannedCount} von 7 geplant`
-                : `Festgelegt · ${plannedCount} Tage`}
+                  ? 'Tag tippen und Gericht wählen'
+                  : `${plannedCount}/7 geplant — dann festnageln`
+                : `${plannedCount} Tage festgelegt`}
             </p>
           </div>
           <button
@@ -1032,26 +1056,29 @@ function WeekView({
           </button>
         </div>
 
-        <ol className={`week-steps ${pitching ? 'is-pitch' : 'is-locked'}`} aria-label="Ablauf">
-          <li
-            className={
-              !pitching || plannedCount > 0 ? 'done' : 'current'
-            }
-          >
-            Planen
+        <ol className="week-steps" aria-label="Wochen-Phasen">
+          <li className={`week-step step-plan ${phasePlan}`}>
+            <span className="week-step-icon" aria-hidden>
+              {phasePlan === 'done' ? <Check size={16} /> : <UtensilsCrossed size={16} />}
+            </span>
+            <span className="week-step-label">Planen</span>
           </li>
-          <li
-            className={
-              !pitching
-                ? 'done'
-                : plannedCount > 0
-                  ? 'current'
-                  : 'next'
-            }
-          >
-            Festnageln
+          <li className={`week-step step-lock ${phaseLock}`}>
+            <span className="week-step-icon" aria-hidden>
+              {phaseLock === 'done' ? <Check size={16} /> : <Pin size={16} />}
+            </span>
+            <span className="week-step-label">Festnageln</span>
           </li>
-          <li className={pitching ? '' : 'current'}>Einkaufen</li>
+          <li className={`week-step step-shop ${phaseShop}`}>
+            <span className="week-step-icon" aria-hidden>
+              {phaseShop === 'current' ? (
+                <ShoppingBasket size={16} />
+              ) : (
+                <Lock size={16} />
+              )}
+            </span>
+            <span className="week-step-label">Einkaufen</span>
+          </li>
         </ol>
 
         <div className="week-toolbar-actions">
@@ -1059,22 +1086,38 @@ function WeekView({
             <>
               <button
                 type="button"
-                className="btn accent"
+                className="btn accent week-action-primary"
                 onClick={lockWeek}
                 disabled={plannedCount === 0}
               >
+                <Pin size={18} aria-hidden />
                 Woche festnageln
               </button>
-              <button type="button" className="btn ghost sm" onClick={onPitch}>
+              <button
+                type="button"
+                className="btn secondary week-action-secondary"
+                onClick={onPitch}
+              >
+                <Lightbulb size={16} aria-hidden />
                 Ideen pitchen
               </button>
             </>
           ) : (
             <>
-              <button type="button" className="btn accent" onClick={onShop}>
+              <button
+                type="button"
+                className="btn accent week-action-primary"
+                onClick={onShop}
+              >
+                <ShoppingBasket size={18} aria-hidden />
                 {bringEnabled ? 'Zur Einkaufsliste' : 'Einkaufsliste bauen'}
               </button>
-              <button type="button" className="btn ghost sm" onClick={reopenWeek}>
+              <button
+                type="button"
+                className="btn ghost week-action-secondary"
+                onClick={reopenWeek}
+              >
+                <Lock size={16} aria-hidden />
                 Woche wieder öffnen
               </button>
             </>
