@@ -22,11 +22,14 @@ favicon.svg
 assets/
 api/bring.php
 api/cookidoo.php
+api/store.php
+api/data/.htaccess
 ```
 
 4. Open the URL where `index.html` lives  
 
-**Requirements:** PHP + curl on the host (needed for Bring / Cookidoo logins).  
+**Requirements:** PHP + curl + **PDO_SQLite** on the host (Bring / Cookidoo / shared DB).  
+The SQLite file is created automatically at `api/data/wochenmahl.sqlite` (not downloadable thanks to `.htaccess`).  
 There is **no `dist` folder** — `www/` is the uploadable build.
 
 ### Option B — full source
@@ -94,6 +97,8 @@ node scripts/logic-check.mjs
 
 ## Notes
 
-- Household data is stored in the browser (`localStorage`)  
-- Passwords are not persisted — only session tokens after a successful link  
-- Bring / Cookidoo use unofficial APIs via PHP proxies; Cookidoo password-grant may stop working if Vorwerk changes auth  
+- On a PHP host, household data (recipes, pitches, week plan, settings) syncs via **SQLite** (`api/store.php` → `api/data/wochenmahl.sqlite`) so Darius & Wendy share one stand  
+- Browser `localStorage` is still used as cache / offline fallback; “who is logged in” stays device-local  
+- Local Vite without PHP = browser-only (see Settings → Gemeinsamer Speicher)  
+- Passwords are not persisted — only session tokens after a successful link (those tokens are part of shared settings once linked)  
+- Bring / Cookidoo use unofficial APIs via PHP proxies; Cookidoo password-grant may stop working if Vorwerk changes auth

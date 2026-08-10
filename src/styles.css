@@ -279,6 +279,10 @@ p {
   background: var(--brand);
   color: #f7faf7;
   font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   transition: transform 0.15s ease, background 0.15s ease, opacity 0.15s ease;
 }
 
@@ -630,6 +634,147 @@ p {
 .day-card.empty {
   border-style: dashed;
   color: var(--muted);
+}
+
+.day-card.clickable {
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.recipe-card.clickable {
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.day-card.clickable:hover,
+.day-card.clickable:focus-visible,
+.recipe-card.clickable:hover,
+.recipe-card.clickable:focus-visible {
+  border-color: #2f6f4e88;
+  background: rgba(255, 255, 255, 0.78);
+  outline: none;
+}
+
+.day-card.clickable:active {
+  transform: scale(0.992);
+}
+
+.ingredient-list {
+  list-style: none;
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+}
+
+.ingredient-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid var(--line);
+  font-size: 0.92rem;
+}
+
+.ingredient-list strong {
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.recipe-detail {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.meal-detail-modal {
+  max-height: min(88vh, 720px);
+  overflow: auto;
+}
+
+.week-calendar-modal {
+  max-height: min(92vh, 760px);
+  overflow: auto;
+}
+
+.cal-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cal-month {
+  text-transform: capitalize;
+  font-size: 1rem;
+}
+
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+
+.cal-dow {
+  text-align: center;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 4px 0;
+}
+
+.cal-day {
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.55);
+  min-height: 44px;
+  display: grid;
+  place-items: center;
+  gap: 2px;
+  padding: 6px 2px 8px;
+  position: relative;
+  font-weight: 600;
+  color: var(--ink);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.cal-day.outside {
+  opacity: 0.38;
+}
+
+.cal-day.today {
+  border-color: #2f6f4e88;
+}
+
+.cal-day.in-active-week {
+  background: #d9ebe0;
+  border-color: #2f6f4e55;
+}
+
+.cal-day:hover,
+.cal-day:focus-visible {
+  border-color: #2f6f4e99;
+  outline: none;
+}
+
+.cal-day.has-plan .cal-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--brand);
+  display: block;
+}
+
+.cal-day.locked.in-active-week,
+.cal-day.locked.has-plan {
+  box-shadow: inset 0 0 0 1px #b85c3844;
 }
 
 .flash {

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   CalendarDays,
+  CalendarRange,
   ChefHat,
   CircleHelp,
   Menu,
@@ -8,11 +9,39 @@ import {
   Settings,
   ShoppingCart,
 } from 'lucide-react'
-import { USERS, mealLabel, slotMealLabel } from './data/seed'
+import {
+  USERS,
+  mealLabel,
+  mondayOf,
+  parseWeekMonday,
+  slotMealLabel,
+  weekIdFromMonday,
+} from './data/seed'
 import { useStore } from './store'
-import type { UserId, Weekday } from './types'
+import {
+  getSyncStatus,
+  subscribeSync,
+  type SyncStatus,
+} from './sync/householdSync'
+import type { Ingredient, Recipe, UserId, WeekSlot, Weekday } from './types'
 
 type Tab = 'week' | 'pitch' | 'recipes' | 'shop' | 'settings' | 'help'
+
+const WEEKDAY_LABELS: Record<Weekday, string> = {
+  mo: 'Montag',
+  di: 'Dienstag',
+  mi: 'Mittwoch',
+  do: 'Donnerstag',
+  fr: 'Freitag',
+  sa: 'Samstag',
+  so: 'Sonntag',
+}
+
+const KIND_LABEL: Record<'meal' | 'base' | 'side', string> = {
+  meal: 'Gericht',
+  base: 'Basis',
+  side: 'Beilage',
+}
 
 function Avatar({ userId, size = 28 }: { userId: UserId; size?: number }) {
   const user = USERS[userId]
@@ -25,6 +54,303 @@ function Avatar({ userId, size = 28 }: { userId: UserId; size?: number }) {
       {user.short}
     </span>
   )
+}
+
+function IngredientList({ items }: { items: Ingredient[] }) {
+  if (items.length === 0) {
+    return <p className="muted tiny">Keine Zutaten hinterlegt.</p>
+  }
+  return (
+    <ul className="ingredient-list">
+      {items.map((item, i) => (
+        <li key={`${item.name}-${i}`}>
+          <span>{item.name}</span>
+          {item.amount ? <strong>{item.amount}</strong> : null}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function RecipeDetailBlock({
+  recipe,
+  fallbackTitle,
+  role,
+}: {
+  recipe?: Recipe
+  fallbackTitle?: string
+  role?: string
+}) {
+  const title = recipe?.title || fallbackTitle
+  if (!title) return null
+  const kind = recipe?.kind ?? 'meal'
+
+  return (
+    <section className="recipe-detail">
+      <div className="row">
+        <div className="grow">
+          {role ? <p className="muted tiny">{role}</p> : null}
+          <h3>{title}</h3>
+          {recipe ? (
+            <p className="muted tiny">
+              {KIND_LABEL[kind]} · von {USERS[recipe.createdBy].name} ·{' '}
+              {recipe.ingredients.length} Zutaten
+            </p>
+          ) : (
+            <p className="muted tiny">Freitext — kein Bibliotheks-Rezept</p>
+          )}
+        </div>
+        {recipe ? <Avatar userId={recipe.createdBy} /> : null}
+      </div>
+      <div className="tags">
+        {kind === 'base' ? <span className="tag green">Basis</span> : null}
+        {kind === 'side' ? <span className="tag">Beilage</span> : null}
+        {recipe?.tags.map((t) => (
+          <span key={t} className="tag">
+            {t}
+          </span>
+        ))}
+        {recipe?.cookidooUrl ? (
+          <span className="tag green">Cookidoo</span>
+        ) : null}
+      </div>
+      {recipe?.notes ? <p className="muted">{recipe.notes}</p> : null}
+      {recipe ? <IngredientList items={recipe.ingredients} /> : null}
+      {recipe?.cookidooUrl ? (
+        <a
+          className="tiny"
+          href={recipe.cookidooUrl}
+          target="_blank"
+          rel="noreferrer"
+        >
+          In Cookidoo öffnen ↗
+        </a>
+      ) : null}
+    </section>
+  )
+}
+
+function MealDetailModal({
+  day,
+  slot,
+  recipes,
+  onClose,
+}: {
+  day: Weekday
+  slot: WeekSlot
+  recipes: Recipe[]
+  onClose: () => void
+}) {
+  const main = recipes.find((r) => r.id === slot.recipeId)
+  const side = recipes.find((r) => r.id === slot.sideRecipeId)
+  const sideTitle = slot.sideTitle || side?.title
+  const headline = slotMealLabel(slot, recipes)
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div
+        className="modal stack meal-detail-modal"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Rezept ${WEEKDAY_LABELS[day]}`}
+      >
+        <div className="section-head">
+          <div>
+            <p className="muted tiny">{WEEKDAY_LABELS[day]}</p>
+            <h2>{headline || 'Gericht'}</h2>
+          </div>
+          <button type="button" className="btn ghost sm" onClick={onClose}>
+            Schließen
+          </button>
+        </div>
+
+        <RecipeDetailBlock
+          recipe={main}
+          fallbackTitle={slot.title || headline}
+          role={sideTitle ? 'Haupt / Basis' : undefined}
+        />
+
+        {sideTitle ? (
+          <RecipeDetailBlock
+            recipe={side}
+            fallbackTitle={sideTitle}
+            role="Beilage"
+          />
+        ) : null}
+
+        {!main && !side && !slot.title && !sideTitle ? (
+          <p className="muted">Für diesen Tag liegt noch kein Rezept vor.</p>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+function sameDay(a: Date, b: Date) {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  )
+}
+
+function WeekCalendarModal({
+  activeWeekId,
+  weeks,
+  onSelectDate,
+  onClose,
+}: {
+  activeWeekId: string
+  weeks: { id: string; status: string; slots: WeekSlot[] }[]
+  onSelectDate: (date: Date) => void
+  onClose: () => void
+}) {
+  const activeMonday = parseWeekMonday(activeWeekId) ?? mondayOf(new Date())
+  const [cursor, setCursor] = useState(
+    () => new Date(activeMonday.getFullYear(), activeMonday.getMonth(), 1),
+  )
+
+  const today = startOfToday()
+  const activeWeekKey = weekIdFromMonday(activeMonday)
+
+  const weeksById = useMemo(() => {
+    const map = new Map(weeks.map((w) => [w.id, w]))
+    return map
+  }, [weeks])
+
+  const cells = useMemo(() => {
+    const year = cursor.getFullYear()
+    const month = cursor.getMonth()
+    const first = new Date(year, month, 1, 12)
+    const gridStart = mondayOf(first)
+    const days: Date[] = []
+    for (let i = 0; i < 42; i++) {
+      const d = new Date(gridStart)
+      d.setDate(gridStart.getDate() + i)
+      days.push(d)
+    }
+    return days
+  }, [cursor])
+
+  const monthTitle = cursor.toLocaleDateString('de-DE', {
+    month: 'long',
+    year: 'numeric',
+  })
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div
+        className="modal stack week-calendar-modal"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Woche wählen"
+      >
+        <div className="section-head">
+          <div>
+            <h2>Kalender</h2>
+            <p className="lede">Woche antippen — Mo bis So.</p>
+          </div>
+          <button type="button" className="btn ghost sm" onClick={onClose}>
+            Schließen
+          </button>
+        </div>
+
+        <div className="cal-nav">
+          <button
+            type="button"
+            className="btn ghost sm"
+            aria-label="Vorheriger Monat"
+            onClick={() =>
+              setCursor(
+                (c) => new Date(c.getFullYear(), c.getMonth() - 1, 1),
+              )
+            }
+          >
+            ‹
+          </button>
+          <strong className="cal-month">{monthTitle}</strong>
+          <button
+            type="button"
+            className="btn ghost sm"
+            aria-label="Nächster Monat"
+            onClick={() =>
+              setCursor(
+                (c) => new Date(c.getFullYear(), c.getMonth() + 1, 1),
+              )
+            }
+          >
+            ›
+          </button>
+        </div>
+
+        <div className="cal-grid" role="grid" aria-label={monthTitle}>
+          {['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'].map((d) => (
+            <div key={d} className="cal-dow">
+              {d}
+            </div>
+          ))}
+          {cells.map((date) => {
+            const weekKey = weekIdFromMonday(mondayOf(date))
+            const week = weeksById.get(weekKey)
+            const inMonth = date.getMonth() === cursor.getMonth()
+            const isToday = sameDay(date, today)
+            const inActiveWeek = weekKey === activeWeekKey
+            const planned =
+              week?.slots.some(
+                (s) => s.recipeId || s.title || s.sideRecipeId || s.sideTitle,
+              ) ?? false
+            const locked = week?.status === 'locked'
+
+            return (
+              <button
+                key={date.toISOString()}
+                type="button"
+                className={[
+                  'cal-day',
+                  inMonth ? '' : 'outside',
+                  isToday ? 'today' : '',
+                  inActiveWeek ? 'in-active-week' : '',
+                  planned ? 'has-plan' : '',
+                  locked ? 'locked' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
+                onClick={() => {
+                  onSelectDate(date)
+                  onClose()
+                }}
+              >
+                <span>{date.getDate()}</span>
+                {planned ? <i className="cal-dot" aria-hidden /> : null}
+              </button>
+            )
+          })}
+        </div>
+
+        <p className="muted tiny">
+          Punkt = Woche mit Gerichten. Grün markiert = aktuelle Woche.
+        </p>
+        <button
+          type="button"
+          className="btn secondary sm"
+          onClick={() => {
+            onSelectDate(new Date())
+            onClose()
+          }}
+        >
+          Zur aktuellen Woche
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function startOfToday() {
+  const d = new Date()
+  d.setHours(12, 0, 0, 0)
+  return d
 }
 
 function LoginScreen() {
@@ -224,7 +550,10 @@ function WeekView({
   const clearSlot = useStore((s) => s.clearSlot)
   const lockWeek = useStore((s) => s.lockWeek)
   const reopenWeek = useStore((s) => s.reopenWeek)
+  const selectWeekByDate = useStore((s) => s.selectWeekByDate)
   const [pickingDay, setPickingDay] = useState<Weekday | null>(null)
+  const [detailDay, setDetailDay] = useState<Weekday | null>(null)
+  const [calendarOpen, setCalendarOpen] = useState(false)
   const [pendingBase, setPendingBase] = useState<{
     recipeId: string
     title: string
@@ -254,18 +583,12 @@ function WeekView({
     [week],
   )
   const locked = week?.status === 'locked'
+  const detailSlot = useMemo(
+    () => week?.slots.find((s) => s.day === detailDay) ?? null,
+    [week, detailDay],
+  )
 
   if (!week) return null
-
-  const weekdayLabels: Record<Weekday, string> = {
-    mo: 'Montag',
-    di: 'Dienstag',
-    mi: 'Mittwoch',
-    do: 'Donnerstag',
-    fr: 'Freitag',
-    sa: 'Samstag',
-    so: 'Sonntag',
-  }
 
   const closePicker = () => {
     setPickingDay(null)
@@ -279,16 +602,29 @@ function WeekView({
           <div>
             <h2>Wochenplan</h2>
             <p className="lede">
-              Gerichte zuordnen — Basis wie Reis kann eine eigene Beilage
-              bekommen.
+              Tippe auf einen Tag mit Gericht für Zutaten &amp; Details. Basis
+              wie Reis kann eine eigene Beilage bekommen.
             </p>
           </div>
-          <span
-            className={`status-pill ${week.status === 'locked' ? '' : 'warn'}`}
-          >
-            {week.status === 'locked' ? 'Festgelegt' : 'Pitch-Phase'}
-          </span>
+          <div className="row wrap" style={{ justifyContent: 'flex-end' }}>
+            <button
+              type="button"
+              className="btn secondary sm"
+              onClick={() => setCalendarOpen(true)}
+            >
+              <CalendarRange size={16} aria-hidden />
+              Kalender
+            </button>
+            <span
+              className={`status-pill ${week.status === 'locked' ? '' : 'warn'}`}
+            >
+              {week.status === 'locked' ? 'Festgelegt' : 'Pitch-Phase'}
+            </span>
+          </div>
         </div>
+        <p className="muted tiny" style={{ marginTop: -4 }}>
+          Woche: <strong>{week.label}</strong>
+        </p>
         <div className="row wrap">
           {week.status === 'pitching' ? (
             <>
@@ -345,15 +681,31 @@ function WeekView({
           return (
             <div
               key={slot.day}
-              className={`day-card ${hasMeal ? '' : 'empty'}`}
+              className={`day-card ${hasMeal ? 'clickable' : 'empty'}`}
+              role={hasMeal ? 'button' : undefined}
+              tabIndex={hasMeal ? 0 : undefined}
+              onClick={hasMeal ? () => setDetailDay(slot.day) : undefined}
+              onKeyDown={
+                hasMeal
+                  ? (e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        setDetailDay(slot.day)
+                      }
+                    }
+                  : undefined
+              }
             >
               <div className="row">
-                <strong className="grow">{weekdayLabels[slot.day]}</strong>
+                <strong className="grow">{WEEKDAY_LABELS[slot.day]}</strong>
                 {hasMeal && !locked ? (
                   <button
                     type="button"
                     className="btn ghost sm"
-                    onClick={() => clearSlot(slot.day)}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      clearSlot(slot.day)
+                    }}
                   >
                     Leeren
                   </button>
@@ -362,12 +714,11 @@ function WeekView({
               {hasMeal ? (
                 <>
                   <h3>{title}</h3>
-                  {side ? (
-                    <p className="muted tiny">
-                      Basis + Beilage — Zutaten von beiden landen in der
-                      Einkaufsliste.
-                    </p>
-                  ) : null}
+                  <p className="muted tiny">
+                    {side
+                      ? 'Basis + Beilage — tippen für Rezept-Details'
+                      : 'Tippen für Rezept-Details'}
+                  </p>
                   <div className="tags">
                     {recipe?.kind === 'base' ? (
                       <span className="tag green">Basis</span>
@@ -386,7 +737,8 @@ function WeekView({
                 <button
                   type="button"
                   className="btn secondary sm"
-                  onClick={() => {
+                  onClick={(e) => {
+                    e.stopPropagation()
                     setPendingBase(null)
                     setPickingDay(slot.day)
                   }}
@@ -399,6 +751,24 @@ function WeekView({
         })}
       </div>
 
+      {detailDay && detailSlot ? (
+        <MealDetailModal
+          day={detailDay}
+          slot={detailSlot}
+          recipes={recipes}
+          onClose={() => setDetailDay(null)}
+        />
+      ) : null}
+
+      {calendarOpen ? (
+        <WeekCalendarModal
+          activeWeekId={activeWeekId}
+          weeks={weeks}
+          onSelectDate={selectWeekByDate}
+          onClose={() => setCalendarOpen(false)}
+        />
+      ) : null}
+
       {pickingDay ? (
         <div className="modal-backdrop" onClick={closePicker}>
           <div className="modal stack" onClick={(e) => e.stopPropagation()}>
@@ -406,7 +776,7 @@ function WeekView({
               <h2>
                 {pendingBase
                   ? `Beilage zu ${pendingBase.title}`
-                  : weekdayLabels[pickingDay]}
+                  : WEEKDAY_LABELS[pickingDay]}
               </h2>
               <button
                 type="button"
@@ -733,6 +1103,7 @@ function RecipesView() {
   const importCookidooRecipe = useStore((s) => s.importCookidooRecipe)
   const importFromCookidooAccount = useStore((s) => s.importFromCookidooAccount)
   const [open, setOpen] = useState(false)
+  const [detailId, setDetailId] = useState<string | null>(null)
   const [cookidooOpen, setCookidooOpen] = useState(false)
   const [title, setTitle] = useState('')
   const [kind, setKind] = useState<'meal' | 'base' | 'side'>('meal')
@@ -774,12 +1145,25 @@ function RecipesView() {
       </div>
 
       {recipes.map((r) => (
-        <article key={r.id} className="recipe-card">
+        <article
+          key={r.id}
+          className="recipe-card clickable"
+          role="button"
+          tabIndex={0}
+          onClick={() => setDetailId(detailId === r.id ? null : r.id)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              setDetailId(detailId === r.id ? null : r.id)
+            }
+          }}
+        >
           <div className="row">
             <div className="grow">
               <h3>{r.title}</h3>
               <p className="muted tiny">
                 von {USERS[r.createdBy].name} · {r.ingredients.length} Zutaten
+                {detailId === r.id ? '' : ' · tippen für Details'}
               </p>
             </div>
             <Avatar userId={r.createdBy} />
@@ -798,11 +1182,24 @@ function RecipesView() {
             ))}
             {r.cookidooUrl ? <span className="tag green">Cookidoo</span> : null}
           </div>
-          {r.notes ? <p className="muted">{r.notes}</p> : null}
-          {r.cookidooUrl ? (
-            <a className="tiny" href={r.cookidooUrl} target="_blank" rel="noreferrer">
-              In Cookidoo öffnen ↗
-            </a>
+          {detailId === r.id ? (
+            <>
+              {r.notes ? <p className="muted">{r.notes}</p> : null}
+              <IngredientList items={r.ingredients} />
+              {r.cookidooUrl ? (
+                <a
+                  className="tiny"
+                  href={r.cookidooUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  In Cookidoo öffnen ↗
+                </a>
+              ) : null}
+            </>
+          ) : r.notes ? (
+            <p className="muted">{r.notes}</p>
           ) : null}
         </article>
       ))}
@@ -1151,6 +1548,21 @@ function ShopView({ onPlan }: { onPlan: () => void }) {
   )
 }
 
+function syncLabel(status: SyncStatus) {
+  switch (status) {
+    case 'checking':
+      return 'Prüfe SQLite…'
+    case 'online':
+      return 'Gemeinsame SQLite-DB'
+    case 'saving':
+      return 'Speichere…'
+    case 'offline':
+      return 'Nur dieser Browser'
+    case 'error':
+      return 'Sync-Fehler'
+  }
+}
+
 function SettingsView() {
   const settings = useStore((s) => s.settings)
   const updateBring = useStore((s) => s.updateBring)
@@ -1169,9 +1581,30 @@ function SettingsView() {
   const [status, setStatus] = useState<{ ok: boolean; message: string } | null>(
     null,
   )
+  const [sync, setSync] = useState(getSyncStatus)
+
+  useEffect(() => subscribeSync((next, detail) => {
+    setSync({ status: next, detail: detail ?? '', revision: getSyncStatus().revision })
+  }), [])
 
   return (
     <div className="stack">
+      <div className="panel stack">
+        <h2>Gemeinsamer Speicher</h2>
+        <p className="lede">
+          Auf dem Webspace liegen Rezepte, Pitches und der Wochenplan in einer
+          mitgelieferten <strong>SQLite</strong>-Datei — Darius und Wendy sehen
+          denselben Stand. Lokal ohne PHP nur im Browser.
+        </p>
+        <div
+          className={`flash ${sync.status === 'online' || sync.status === 'saving' ? '' : sync.status === 'offline' ? '' : 'bad'}`}
+        >
+          {syncLabel(sync.status)}
+          {sync.detail ? ` — ${sync.detail}` : ''}
+          {sync.revision > 0 ? ` (Rev. ${sync.revision})` : ''}
+        </div>
+      </div>
+
       <div className="panel">
         <h2>Integrationen</h2>
         <p className="lede">
@@ -1443,7 +1876,8 @@ function HelpView({ onOpenSettings }: { onOpenSettings: () => void }) {
           </li>
           <li>
             <strong>Plan</strong> — Gerichte den Wochentagen zuordnen; bei einer
-            Basis danach die Beilage wählen. Erst nach „Woche festnageln“
+            Basis danach die Beilage wählen. Tippe auf einen befüllten Tag, um
+            Rezept-Details und Zutaten zu sehen. Erst nach „Woche festnageln“
             Einkaufsliste laden / an Bring senden.
           </li>
           <li>

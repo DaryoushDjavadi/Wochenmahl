@@ -13,6 +13,11 @@ dist-ssr
 *.local
 
 # `www/` is the committed uploadable build — do not ignore it.
+# Runtime SQLite DB (created on the webspace)
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
 
 # Editor directories and files
 .vscode/*

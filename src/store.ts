@@ -10,6 +10,9 @@ import {
   DEFAULT_SETTINGS,
   SEED_RECIPES,
   createFreshWeek,
+  createWeekForMonday,
+  mondayOf,
+  weekIdFromMonday,
 } from './data/seed'
 import type {
   AppSettings,
@@ -62,6 +65,7 @@ interface Store {
   clearSlot: (day: Weekday) => void
   lockWeek: () => void
   reopenWeek: () => void
+  selectWeekByDate: (date: Date) => void
   buildShoppingList: () => Ingredient[]
   setShoppingDraft: (items: Ingredient[]) => void
   updateBring: (patch: Partial<AppSettings['bring']>) => void
@@ -317,6 +321,24 @@ export const useStore = create<Store>()(
             weeks: get().weeks.map((w) =>
               w.id === get().activeWeekId ? { ...w, status: 'pitching' } : w,
             ),
+            shoppingDraft: [],
+          })
+        },
+
+        selectWeekByDate: (date) => {
+          const monday = mondayOf(date)
+          const id = weekIdFromMonday(monday)
+          const existing = get().weeks.find((w) => w.id === id)
+          if (existing) {
+            set({ activeWeekId: id, shoppingDraft: [] })
+            return
+          }
+          const week = createWeekForMonday(monday)
+          set({
+            weeks: [...get().weeks, week].sort((a, b) =>
+              a.id.localeCompare(b.id),
+            ),
+            activeWeekId: week.id,
             shoppingDraft: [],
           })
         },

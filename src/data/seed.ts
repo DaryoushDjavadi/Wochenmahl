@@ -238,29 +238,64 @@ export function slotMealLabel(
   return mealLabel(main || recipe?.title, side)
 }
 
-function nextMondayLabel(): { id: string; label: string } {
-  const now = new Date()
-  const day = now.getDay()
-  const diff = day === 0 ? 1 : 8 - day
-  const monday = new Date(now)
-  monday.setDate(now.getDate() + diff)
+function startOfDay(d: Date): Date {
+  const x = new Date(d)
+  x.setHours(12, 0, 0, 0)
+  return x
+}
+
+/** Monday of the week that contains `date` (ISO week, Mo–So). */
+export function mondayOf(date: Date): Date {
+  const d = startOfDay(date)
+  const day = d.getDay() // 0 Sun … 6 Sat
+  const diff = day === 0 ? -6 : 1 - day
+  d.setDate(d.getDate() + diff)
+  return d
+}
+
+export function weekIdFromMonday(monday: Date): string {
+  const y = monday.getFullYear()
+  const m = String(monday.getMonth() + 1).padStart(2, '0')
+  const day = String(monday.getDate()).padStart(2, '0')
+  return `week-${y}-${m}-${day}`
+}
+
+export function weekLabelFromMonday(monday: Date): string {
   const sunday = new Date(monday)
   sunday.setDate(monday.getDate() + 6)
   const fmt = (d: Date) =>
     d.toLocaleDateString('de-DE', { day: '2-digit', month: 'short' })
-  const id = `week-${monday.toISOString().slice(0, 10)}`
-  return { id, label: `${fmt(monday)} – ${fmt(sunday)}` }
+  return `${fmt(monday)} – ${fmt(sunday)}`
 }
 
-export function createFreshWeek(): WeekPlan {
-  const weekMeta = nextMondayLabel()
+export function parseWeekMonday(weekId: string): Date | null {
+  const m = /^week-(\d{4})-(\d{2})-(\d{2})$/.exec(weekId)
+  if (!m) return null
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12)
+  return Number.isNaN(d.getTime()) ? null : mondayOf(d)
+}
+
+export function createWeekForMonday(mondayInput: Date): WeekPlan {
+  const monday = mondayOf(mondayInput)
   return {
-    id: weekMeta.id,
-    label: weekMeta.label,
+    id: weekIdFromMonday(monday),
+    label: weekLabelFromMonday(monday),
     status: 'pitching',
     slots: WEEKDAYS.map((d) => ({ day: d.id })),
     createdAt: new Date().toISOString(),
   }
+}
+
+function nextMonday(): Date {
+  const now = startOfDay(new Date())
+  const day = now.getDay()
+  const diff = day === 0 ? 1 : 8 - day
+  now.setDate(now.getDate() + diff)
+  return now
+}
+
+export function createFreshWeek(): WeekPlan {
+  return createWeekForMonday(nextMonday())
 }
 
 export const SEED_WEEK: WeekPlan = createFreshWeek()
