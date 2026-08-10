@@ -1,4 +1,4 @@
-import type { AppSettings, Ingredient, Pitch, Recipe, WeekPlan } from '../types'
+import type { AppSettings, Pitch, Recipe, ShoppingItem, WeekPlan } from '../types'
 import {
   loadHousehold,
   pingStore,
@@ -64,7 +64,7 @@ function applyRemote(state: HouseholdState, nextRevision: number) {
     pitches: (state.pitches as Pitch[]) ?? [],
     weeks: (state.weeks as WeekPlan[]) ?? useStore.getState().weeks,
     activeWeekId: state.activeWeekId || useStore.getState().activeWeekId,
-    shoppingDraft: (state.shoppingDraft as Ingredient[]) ?? [],
+    shoppingDraft: (state.shoppingDraft as ShoppingItem[]) ?? [],
     settings: (state.settings as AppSettings) ?? useStore.getState().settings,
   })
   queueMicrotask(() => {

@@ -6,6 +6,7 @@ import {
   CircleHelp,
   Menu,
   MessageSquarePlus,
+  Search,
   Settings,
   ShoppingCart,
 } from 'lucide-react'
@@ -17,6 +18,12 @@ import {
   slotMealLabel,
   weekIdFromMonday,
 } from './data/seed'
+import {
+  listCookidooCollectionRecipes,
+  listCookidooCollections,
+  searchCookidooRecipes,
+  type CookidooBrowseRecipe,
+} from './api/integrations'
 import { useStore } from './store'
 import {
   getSyncStatus,
@@ -35,6 +42,16 @@ const WEEKDAY_LABELS: Record<Weekday, string> = {
   fr: 'Freitag',
   sa: 'Samstag',
   so: 'Sonntag',
+}
+
+const WEEKDAY_COLOR_CLASS: Record<Weekday, string> = {
+  mo: 'day-title-mo',
+  di: 'day-title-di',
+  mi: 'day-title-mi',
+  do: 'day-title-do',
+  fr: 'day-title-fr',
+  sa: 'day-title-sa',
+  so: 'day-title-so',
 }
 
 const KIND_LABEL: Record<'meal' | 'base' | 'side', string> = {
@@ -157,7 +174,9 @@ function MealDetailModal({
       >
         <div className="section-head">
           <div>
-            <p className="muted tiny">{WEEKDAY_LABELS[day]}</p>
+            <p className={`tiny day-title ${WEEKDAY_COLOR_CLASS[day]}`}>
+              {WEEKDAY_LABELS[day]}
+            </p>
             <h2>{headline || 'Gericht'}</h2>
           </div>
           <button type="button" className="btn ghost sm" onClick={onClose}>
@@ -353,6 +372,304 @@ function startOfToday() {
   return d
 }
 
+function CookidooBrowseModal({
+  onClose,
+  onImported,
+}: {
+  onClose: () => void
+  onImported: (title: string) => void
+}) {
+  const settings = useStore((s) => s.settings)
+  const importFromCookidooAccount = useStore((s) => s.importFromCookidooAccount)
+  const [tab, setTab] = useState<'search' | 'lists' | 'link'>('search')
+  const [query, setQuery] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [importingId, setImportingId] = useState<string | null>(null)
+  const [flash, setFlash] = useState<string | null>(null)
+  const [recipes, setRecipes] = useState<CookidooBrowseRecipe[]>([])
+  const [lists, setLists] = useState<
+    { id: string | null; title: string; count?: number | null }[]
+  >([])
+  const [activeListTitle, setActiveListTitle] = useState<string | null>(null)
+  const [manualRef, setManualRef] = useState('')
+  const [fallbackUrl, setFallbackUrl] = useState<string | null>(null)
+
+  const token = settings.cookidoo.accessToken
+  const country = settings.cookidoo.country || 'de'
+  const linked = settings.cookidoo.linked && Boolean(token)
+
+  const runSearch = async () => {
+    if (!linked || !token || !query.trim()) return
+    setBusy(true)
+    setFlash(null)
+    setActiveListTitle(null)
+    try {
+      const res = await searchCookidooRecipes({
+        accessToken: token,
+        query: query.trim(),
+        country,
+      })
+      setRecipes(res.recipes ?? [])
+      setFallbackUrl(res.searchUrl ?? null)
+      setFlash(res.message + (res.hint ? ` — ${res.hint}` : ''))
+    } catch (err) {
+      setRecipes([])
+      setFlash(err instanceof Error ? err.message : 'Suche fehlgeschlagen')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const loadLists = async () => {
+    if (!linked || !token) return
+    setBusy(true)
+    setFlash(null)
+    try {
+      const res = await listCookidooCollections({
+        accessToken: token,
+        country,
+      })
+      setLists(res.lists ?? [])
+      setFlash(res.message)
+    } catch (err) {
+      setLists([])
+      setFlash(err instanceof Error ? err.message : 'Listen laden fehlgeschlagen')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const openList = async (listId: string, title: string) => {
+    if (!linked || !token) return
+    setBusy(true)
+    setFlash(null)
+    setActiveListTitle(title)
+    try {
+      const res = await listCookidooCollectionRecipes({
+        accessToken: token,
+        listId,
+        country,
+      })
+      setRecipes(res.recipes ?? [])
+      setFlash(res.message)
+      setTab('search')
+    } catch (err) {
+      setRecipes([])
+      setFlash(err instanceof Error ? err.message : 'Liste lesen fehlgeschlagen')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const importRecipe = async (ref: string, titleHint?: string) => {
+    setImportingId(ref)
+    setFlash(null)
+    try {
+      const res = await importFromCookidooAccount(ref)
+      setFlash(res.message)
+      if (res.ok) onImported(titleHint || ref)
+    } catch (err) {
+      setFlash(err instanceof Error ? err.message : 'Import fehlgeschlagen')
+    } finally {
+      setImportingId(null)
+    }
+  }
+
+  useEffect(() => {
+    if (tab === 'lists' && linked) {
+      void loadLists()
+    }
+  }, [tab]) // load when switching to lists
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div
+        className="modal stack cookidoo-browse-modal"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Cookidoo stöbern"
+      >
+        <div className="section-head">
+          <div>
+            <h2>Cookidoo stöbern</h2>
+            <p className="lede">Optional — suchen, Listen öffnen oder Link paste.</p>
+          </div>
+          <button type="button" className="btn ghost sm" onClick={onClose}>
+            Schließen
+          </button>
+        </div>
+
+        {!linked ? (
+          <div className="flash bad">
+            Cookidoo ist noch nicht verknüpft — Menü → Einstellungen → Cookidoo
+            Login. Danach kannst du hier stöbern.
+          </div>
+        ) : null}
+
+        <div className="row wrap">
+          <button
+            type="button"
+            className={`btn sm ${tab === 'search' ? '' : 'secondary'}`}
+            onClick={() => setTab('search')}
+          >
+            Suche
+          </button>
+          <button
+            type="button"
+            className={`btn sm ${tab === 'lists' ? '' : 'secondary'}`}
+            onClick={() => setTab('lists')}
+            disabled={!linked}
+          >
+            Meine Listen
+          </button>
+          <button
+            type="button"
+            className={`btn sm ${tab === 'link' ? '' : 'secondary'}`}
+            onClick={() => setTab('link')}
+          >
+            Link / ID
+          </button>
+          <a
+            className="btn sm secondary"
+            href={
+              query.trim()
+                ? `https://cookidoo.de/search?query=${encodeURIComponent(query.trim())}`
+                : 'https://cookidoo.de/'
+            }
+            target="_blank"
+            rel="noreferrer"
+          >
+            cookidoo.de ↗
+          </a>
+        </div>
+
+        {tab === 'search' ? (
+          <div className="stack">
+            <div className="row wrap">
+              <div className="field grow" style={{ margin: 0 }}>
+                <label htmlFor="cook-browse-q">Suchbegriff</label>
+                <input
+                  id="cook-browse-q"
+                  value={query}
+                  disabled={!linked || busy}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void runSearch()
+                  }}
+                  placeholder="z. B. Pasta, Curry, Salat…"
+                />
+              </div>
+              <button
+                type="button"
+                className="btn sm"
+                disabled={!linked || busy || !query.trim()}
+                onClick={() => void runSearch()}
+                style={{ alignSelf: 'end' }}
+              >
+                <Search size={16} aria-hidden />
+                {busy ? '…' : 'Suchen'}
+              </button>
+            </div>
+            {activeListTitle ? (
+              <p className="muted tiny">Liste: {activeListTitle}</p>
+            ) : null}
+          </div>
+        ) : null}
+
+        {tab === 'lists' ? (
+          <div className="stack">
+            <button
+              type="button"
+              className="btn secondary sm"
+              disabled={!linked || busy}
+              onClick={() => void loadLists()}
+            >
+              {busy ? 'Lade…' : 'Listen aktualisieren'}
+            </button>
+            {lists.length === 0 ? (
+              <p className="muted tiny">
+                Noch keine Listen — Favoriten/Custom Lists vom Konto erscheinen
+                hier, wenn die API sie liefert.
+              </p>
+            ) : (
+              lists.map((list, i) => (
+                <button
+                  key={`${list.id ?? list.title}-${i}`}
+                  type="button"
+                  className="btn secondary"
+                  disabled={!list.id || busy}
+                  onClick={() => {
+                    if (list.id) void openList(list.id, list.title)
+                  }}
+                >
+                  {list.title}
+                  {list.count != null ? ` · ${list.count}` : ''}
+                  {!list.id ? ' (ohne ID)' : ''}
+                </button>
+              ))
+            )}
+          </div>
+        ) : null}
+
+        {tab === 'link' ? (
+          <div className="stack">
+            <div className="field">
+              <label htmlFor="cook-browse-ref">Cookidoo-Link oder ID</label>
+              <input
+                id="cook-browse-ref"
+                value={manualRef}
+                disabled={!linked || Boolean(importingId)}
+                onChange={(e) => setManualRef(e.target.value)}
+                placeholder="https://cookidoo.de/.../r123 oder r123"
+              />
+            </div>
+            <button
+              type="button"
+              className="btn"
+              disabled={!linked || !manualRef.trim() || Boolean(importingId)}
+              onClick={() => void importRecipe(manualRef.trim())}
+            >
+              {importingId ? 'Importiere…' : 'Importieren'}
+            </button>
+          </div>
+        ) : null}
+
+        {flash ? <div className="flash">{flash}</div> : null}
+        {fallbackUrl && recipes.length === 0 ? (
+          <a className="tiny" href={fallbackUrl} target="_blank" rel="noreferrer">
+            Stattdessen auf Cookidoo.de suchen ↗
+          </a>
+        ) : null}
+
+        {tab !== 'link' && recipes.length > 0 ? (
+          <div className="cookidoo-results">
+            {recipes.map((r) => (
+              <div key={r.id} className="cookidoo-result">
+                <div className="grow">
+                  <strong>{r.title}</strong>
+                  <p className="muted tiny">
+                    {r.id}
+                    {r.totalTime ? ` · ${r.totalTime}` : ''}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="btn sm accent"
+                  disabled={!linked || importingId === r.id}
+                  onClick={() => void importRecipe(r.id, r.title)}
+                >
+                  {importingId === r.id ? '…' : 'Import'}
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
 function LoginScreen() {
   const login = useStore((s) => s.login)
   return (
@@ -361,7 +678,7 @@ function LoginScreen() {
         <div className="login-hero">
           <h1>Wochenkochen</h1>
           <p>
-            Am Wochenende pitchen, festnageln, einkaufen — Darius &amp; Wendy
+            Am Wochenende pitchen, festnageln, einkaufen — Daryoush &amp; Wendi
             planen die nächste Woche gemeinsam.
           </p>
         </div>
@@ -374,15 +691,15 @@ function LoginScreen() {
             <button type="button" onClick={() => login('darius')}>
               <Avatar userId="darius" size={44} />
               <span>
-                <strong>Darius</strong>
-                <span>Weiter als Darius</span>
+                <strong>Daryoush</strong>
+                <span>Weiter als Daryoush</span>
               </span>
             </button>
             <button type="button" onClick={() => login('wendy')}>
               <Avatar userId="wendy" size={44} />
               <span>
-                <strong>Wendy</strong>
-                <span>Weiter als Wendy</span>
+                <strong>Wendi</strong>
+                <span>Weiter als Wendi</span>
               </span>
             </button>
           </div>
@@ -697,7 +1014,9 @@ function WeekView({
               }
             >
               <div className="row">
-                <strong className="grow">{WEEKDAY_LABELS[slot.day]}</strong>
+                <strong className={`grow day-title ${WEEKDAY_COLOR_CLASS[slot.day]}`}>
+                  {WEEKDAY_LABELS[slot.day]}
+                </strong>
                 {hasMeal && !locked ? (
                   <button
                     type="button"
@@ -1100,22 +1419,88 @@ function RecipesView() {
   const recipes = useStore((s) => s.recipes)
   const settings = useStore((s) => s.settings)
   const addRecipe = useStore((s) => s.addRecipe)
-  const importCookidooRecipe = useStore((s) => s.importCookidooRecipe)
-  const importFromCookidooAccount = useStore((s) => s.importFromCookidooAccount)
-  const [open, setOpen] = useState(false)
+  const updateRecipe = useStore((s) => s.updateRecipe)
+  const duplicateRecipe = useStore((s) => s.duplicateRecipe)
+  const [formOpen, setFormOpen] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [detailId, setDetailId] = useState<string | null>(null)
-  const [cookidooOpen, setCookidooOpen] = useState(false)
+  const [browseOpen, setBrowseOpen] = useState(false)
+  const [browseFlash, setBrowseFlash] = useState<string | null>(null)
+  const [flash, setFlash] = useState<string | null>(null)
   const [title, setTitle] = useState('')
   const [kind, setKind] = useState<'meal' | 'base' | 'side'>('meal')
   const [tags, setTags] = useState('')
   const [ingredients, setIngredients] = useState('')
   const [notes, setNotes] = useState('')
-  const [cTitle, setCTitle] = useState('')
-  const [cUrl, setCUrl] = useState('')
-  const [cIngredients, setCIngredients] = useState('')
-  const [cNotes, setCNotes] = useState('')
-  const [cBusy, setCBusy] = useState(false)
-  const [cFlash, setCFlash] = useState<string | null>(null)
+  const [cookidooUrl, setCookidooUrl] = useState('')
+
+  const resetForm = () => {
+    setEditingId(null)
+    setTitle('')
+    setKind('meal')
+    setTags('')
+    setIngredients('')
+    setNotes('')
+    setCookidooUrl('')
+  }
+
+  const openCreate = () => {
+    resetForm()
+    setFormOpen(true)
+  }
+
+  const openEdit = (recipe: (typeof recipes)[number]) => {
+    setEditingId(recipe.id)
+    setTitle(recipe.title)
+    setKind(recipe.kind ?? 'meal')
+    setTags(recipe.tags.join(', '))
+    setIngredients(
+      recipe.ingredients
+        .map((i) => (i.amount ? `${i.amount} ${i.name}` : i.name))
+        .join('\n'),
+    )
+    setNotes(recipe.notes ?? '')
+    setCookidooUrl(recipe.cookidooUrl ?? '')
+    setFormOpen(true)
+  }
+
+  const parseIngredients = () =>
+    ingredients
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const m = line.match(
+          /^([\d.,/\s]+(?:g|kg|ml|l|EL|TL|Stk\.?)?)\s+(.+)$/i,
+        )
+        if (m) return { amount: m[1].trim(), name: m[2].trim() }
+        return { name: line }
+      })
+
+  const saveForm = () => {
+    if (!title.trim()) return
+    const payload = {
+      title: title.trim(),
+      kind,
+      tags: tags
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean),
+      ingredients: parseIngredients(),
+      notes: notes.trim() || undefined,
+      cookidooUrl: cookidooUrl.trim() || undefined,
+    }
+    if (editingId) {
+      updateRecipe(editingId, payload)
+      setFlash(`„${payload.title}“ gespeichert`)
+      setDetailId(editingId)
+    } else {
+      addRecipe(payload)
+      setFlash(`„${payload.title}“ angelegt`)
+    }
+    resetForm()
+    setFormOpen(false)
+  }
 
   return (
     <div className="stack">
@@ -1124,30 +1509,33 @@ function RecipesView() {
           <div>
             <h2>Rezepte</h2>
             <p className="lede">
-              Bibliothek — volle Gerichte, Basis (z.&nbsp;B. Reis) und Beilagen.
+              Bibliothek — anlegen, anpassen oder duplizieren.
             </p>
           </div>
         </div>
         <div className="row wrap">
-          <button type="button" className="btn sm" onClick={() => setOpen(true)}>
+          <button type="button" className="btn sm" onClick={openCreate}>
             Neu
           </button>
           {settings.cookidoo.enabled ? (
             <button
               type="button"
               className="btn sm secondary"
-              onClick={() => setCookidooOpen(true)}
+              onClick={() => setBrowseOpen(true)}
             >
-              Cookidoo import
+              <Search size={16} aria-hidden />
+              Cookidoo stöbern
             </button>
           ) : null}
         </div>
+        {flash ? <div className="flash">{flash}</div> : null}
+        {browseFlash ? <div className="flash">{browseFlash}</div> : null}
       </div>
 
       {recipes.map((r) => (
         <article
           key={r.id}
-          className="recipe-card clickable"
+          className={`recipe-card clickable ${detailId === r.id ? 'open' : ''}`}
           role="button"
           tabIndex={0}
           onClick={() => setDetailId(detailId === r.id ? null : r.id)}
@@ -1197,6 +1585,32 @@ function RecipesView() {
                   In Cookidoo öffnen ↗
                 </a>
               ) : null}
+              <div
+                className="row wrap"
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => e.stopPropagation()}
+              >
+                <button
+                  type="button"
+                  className="btn sm secondary"
+                  onClick={() => openEdit(r)}
+                >
+                  Anpassen
+                </button>
+                <button
+                  type="button"
+                  className="btn sm secondary"
+                  onClick={() => {
+                    const id = duplicateRecipe(r.id)
+                    if (id) {
+                      setDetailId(id)
+                      setFlash(`Kopie von „${r.title}“ angelegt`)
+                    }
+                  }}
+                >
+                  Duplizieren
+                </button>
+              </div>
             </>
           ) : r.notes ? (
             <p className="muted">{r.notes}</p>
@@ -1204,13 +1618,35 @@ function RecipesView() {
         </article>
       ))}
 
-      {open ? (
-        <div className="modal-backdrop" onClick={() => setOpen(false)}>
+      {formOpen ? (
+        <div
+          className="modal-backdrop"
+          onClick={() => {
+            setFormOpen(false)
+            resetForm()
+          }}
+        >
           <div className="modal stack" onClick={(e) => e.stopPropagation()}>
-            <h2>Neues Rezept</h2>
+            <div className="section-head">
+              <h2>{editingId ? 'Rezept anpassen' : 'Neues Rezept'}</h2>
+              <button
+                type="button"
+                className="btn ghost sm"
+                onClick={() => {
+                  setFormOpen(false)
+                  resetForm()
+                }}
+              >
+                Schließen
+              </button>
+            </div>
             <div className="field">
               <label htmlFor="r-title">Titel</label>
-              <input id="r-title" value={title} onChange={(e) => setTitle(e.target.value)} />
+              <input
+                id="r-title"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+              />
             </div>
             <div className="field">
               <label htmlFor="r-kind">Typ</label>
@@ -1246,140 +1682,41 @@ function RecipesView() {
             </div>
             <div className="field">
               <label htmlFor="r-notes">Notizen</label>
-              <textarea id="r-notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
+              <textarea
+                id="r-notes"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="r-cookidoo">Cookidoo-Link (optional)</label>
+              <input
+                id="r-cookidoo"
+                value={cookidooUrl}
+                onChange={(e) => setCookidooUrl(e.target.value)}
+                placeholder="https://cookidoo.de/..."
+              />
             </div>
             <button
               type="button"
               className="btn"
               disabled={!title.trim()}
-              onClick={() => {
-                addRecipe({
-                  title: title.trim(),
-                  kind,
-                  tags: tags
-                    .split(',')
-                    .map((t) => t.trim())
-                    .filter(Boolean),
-                  ingredients: ingredients
-                    .split('\n')
-                    .map((l) => l.trim())
-                    .filter(Boolean)
-                    .map((line) => {
-                      const m = line.match(
-                        /^([\d.,/\s]+(?:g|kg|ml|l|EL|TL|Stk\.?)?)\s+(.+)$/i,
-                      )
-                      if (m) return { amount: m[1].trim(), name: m[2].trim() }
-                      return { name: line }
-                    }),
-                  notes: notes.trim() || undefined,
-                })
-                setTitle('')
-                setKind('meal')
-                setTags('')
-                setIngredients('')
-                setNotes('')
-                setOpen(false)
-              }}
+              onClick={saveForm}
             >
-              Speichern
+              {editingId ? 'Änderungen speichern' : 'Speichern'}
             </button>
           </div>
         </div>
       ) : null}
 
-      {cookidooOpen ? (
-        <div className="modal-backdrop" onClick={() => setCookidooOpen(false)}>
-          <div className="modal stack" onClick={(e) => e.stopPropagation()}>
-            <h2>Cookidoo Import</h2>
-            {settings.cookidoo.linked ? (
-              <>
-                <p className="lede">
-                  Mit verknüpftem Konto: Link oder Rezept-ID laden (z.&nbsp;B.
-                  https://cookidoo.de/…/r59322 oder r59322).
-                </p>
-                <div className="field">
-                  <label htmlFor="c-url">Cookidoo-Link oder ID</label>
-                  <input
-                    id="c-url"
-                    value={cUrl}
-                    onChange={(e) => setCUrl(e.target.value)}
-                    placeholder="https://cookidoo.de/.../r123 oder r123"
-                  />
-                </div>
-                {cFlash ? <div className="flash">{cFlash}</div> : null}
-                <button
-                  type="button"
-                  className="btn"
-                  disabled={!cUrl.trim() || cBusy}
-                  onClick={async () => {
-                    setCBusy(true)
-                    const res = await importFromCookidooAccount(cUrl.trim())
-                    setCFlash(res.message)
-                    setCBusy(false)
-                    if (res.ok) {
-                      setCUrl('')
-                      setTimeout(() => setCookidooOpen(false), 700)
-                    }
-                  }}
-                >
-                  {cBusy ? 'Lade…' : 'Vom Konto laden'}
-                </button>
-                <div className="divider" />
-                <p className="muted tiny">Oder manuell eintragen:</p>
-              </>
-            ) : (
-              <p className="lede">
-                Konto unter Menü → Einstellungen verknüpfen für Auto-Import — oder
-                Titel, Link und Zutaten manuell einfügen.
-              </p>
-            )}
-            <div className="field">
-              <label htmlFor="c-url-manual">Cookidoo-Link</label>
-              <input
-                id="c-url-manual"
-                value={cUrl}
-                onChange={(e) => setCUrl(e.target.value)}
-                placeholder="https://cookidoo.de/..."
-              />
-            </div>
-            <div className="field">
-              <label htmlFor="c-title">Titel</label>
-              <input id="c-title" value={cTitle} onChange={(e) => setCTitle(e.target.value)} />
-            </div>
-            <div className="field">
-              <label htmlFor="c-ing">Zutaten</label>
-              <textarea
-                id="c-ing"
-                value={cIngredients}
-                onChange={(e) => setCIngredients(e.target.value)}
-              />
-            </div>
-            <div className="field">
-              <label htmlFor="c-notes">Notizen</label>
-              <textarea id="c-notes" value={cNotes} onChange={(e) => setCNotes(e.target.value)} />
-            </div>
-            <button
-              type="button"
-              className="btn secondary"
-              disabled={!cUrl.trim() || !cTitle.trim()}
-              onClick={() => {
-                importCookidooRecipe({
-                  title: cTitle,
-                  url: cUrl,
-                  ingredientsText: cIngredients,
-                  notes: cNotes || undefined,
-                })
-                setCTitle('')
-                setCUrl('')
-                setCIngredients('')
-                setCNotes('')
-                setCookidooOpen(false)
-              }}
-            >
-              Manuell speichern
-            </button>
-          </div>
-        </div>
+      {browseOpen ? (
+        <CookidooBrowseModal
+          onClose={() => setBrowseOpen(false)}
+          onImported={(importedTitle) => {
+            setBrowseFlash(`Importiert: ${importedTitle}`)
+            setTimeout(() => setBrowseOpen(false), 600)
+          }}
+        />
       ) : null}
     </div>
   )
@@ -1391,6 +1728,9 @@ function ShopView({ onPlan }: { onPlan: () => void }) {
   const weeks = useStore((s) => s.weeks)
   const activeWeekId = useStore((s) => s.activeWeekId)
   const buildShoppingList = useStore((s) => s.buildShoppingList)
+  const updateShoppingItem = useStore((s) => s.updateShoppingItem)
+  const removeShoppingItem = useStore((s) => s.removeShoppingItem)
+  const addShoppingItem = useStore((s) => s.addShoppingItem)
   const pushToBring = useStore((s) => s.pushToBring)
   const [flash, setFlash] = useState<{ ok: boolean; message: string } | null>(
     null,
@@ -1402,10 +1742,18 @@ function ShopView({ onPlan }: { onPlan: () => void }) {
     [weeks, activeWeekId],
   )
   const locked = week?.status === 'locked'
-  const items = useMemo(
-    () => (shoppingDraft.length ? shoppingDraft : []),
-    [shoppingDraft],
-  )
+  const items = shoppingDraft
+  const sendableCount = items.filter((i) => i.name.trim()).length
+  const groups = useMemo(() => {
+    const map = new Map<string, typeof items>()
+    for (const item of items) {
+      const key = (item.dish || 'Extra').trim() || 'Extra'
+      const list = map.get(key)
+      if (list) list.push(item)
+      else map.set(key, [item])
+    }
+    return [...map.entries()]
+  }, [items])
 
   return (
     <div className="stack">
@@ -1414,13 +1762,11 @@ function ShopView({ onPlan }: { onPlan: () => void }) {
           <div>
             <h2>Einkaufsliste</h2>
             <p className="lede">
-              Erst wenn die Woche festgenagelt ist — dann bewusst an Bring
-              senden.
+              Nach dem Festnageln: Liste laden — Zutaten nach Gericht geordnet,
+              Mengen anpassen, dann an Bring senden.
             </p>
           </div>
-          <span
-            className={`status-pill ${locked ? '' : 'warn'}`}
-          >
+          <span className={`status-pill ${locked ? '' : 'warn'}`}>
             {locked ? 'Plan final' : 'Noch Pitch'}
           </span>
         </div>
@@ -1448,7 +1794,7 @@ function ShopView({ onPlan }: { onPlan: () => void }) {
                     ok: list.length > 0,
                     message:
                       list.length > 0
-                        ? `${list.length} Zutaten aus dem finalen Plan.`
+                        ? `${list.length} Zutaten geladen — Mengen kannst du noch ändern.`
                         : 'Im finalen Plan sind noch keine Gerichte mit Zutaten.',
                   })
                 }}
@@ -1457,12 +1803,26 @@ function ShopView({ onPlan }: { onPlan: () => void }) {
               </button>
               <button
                 type="button"
+                className="btn sm secondary"
+                disabled={!locked}
+                onClick={() => {
+                  addShoppingItem()
+                  setFlash({
+                    ok: true,
+                    message: 'Leere Zeile ergänzt — Name & Menge eintragen.',
+                  })
+                }}
+              >
+                Zutat +
+              </button>
+              <button
+                type="button"
                 className="btn sm accent"
                 disabled={
                   busy ||
                   !settings.bring.enabled ||
                   !settings.bring.linked ||
-                  items.length === 0
+                  sendableCount === 0
                 }
                 onClick={async () => {
                   setBusy(true)
@@ -1489,7 +1849,7 @@ function ShopView({ onPlan }: { onPlan: () => void }) {
             ) : (
               <p className="muted tiny">
                 Bring optional unter Menü → Einstellungen einschalten. Die Liste
-                unten kannst du trotzdem laden.
+                unten kannst du trotzdem laden und bearbeiten.
               </p>
             )}
           </>
@@ -1505,29 +1865,65 @@ function ShopView({ onPlan }: { onPlan: () => void }) {
         <div className={`flash ${flash.ok ? '' : 'bad'}`}>{flash.message}</div>
       ) : null}
 
-      <ul className="shopping-list panel">
+      <div className="shopping-list panel stack">
         {!locked ? (
-          <li>
-            <span className="muted">
-              Wartet auf finalen Wochenplan („Woche festnageln“).
-            </span>
-          </li>
+          <p className="muted">
+            Wartet auf finalen Wochenplan („Woche festnageln“).
+          </p>
         ) : items.length === 0 ? (
-          <li>
-            <span className="muted">
-              Noch leer — „Liste aus Plan laden“, dann bei Bedarf an Bring
-              senden.
-            </span>
-          </li>
+          <p className="muted">
+            Noch leer — „Liste aus Plan laden“, Mengen anpassen, dann an Bring
+            senden.
+          </p>
         ) : (
-          items.map((item) => (
-            <li key={`${item.name}-${item.amount ?? ''}`}>
-              <span>{item.name}</span>
-              <span className="muted">{item.amount}</span>
-            </li>
-          ))
+          groups.map(([dish, groupItems]) => {
+            const day = groupItems.find((i) => i.day)?.day
+            return (
+              <section key={dish} className="shop-group">
+                <h3
+                  className={`shop-group-title ${day ? WEEKDAY_COLOR_CLASS[day] : ''}`}
+                >
+                  {dish}
+                </h3>
+                {groupItems.map((item) => (
+                  <div key={item.id} className="shop-row">
+                    <div className="shop-row-fields">
+                      <input
+                        className="shop-input name"
+                        value={item.name}
+                        placeholder="Zutat"
+                        aria-label={`Zutat für ${dish}`}
+                        onChange={(e) =>
+                          updateShoppingItem(item.id, { name: e.target.value })
+                        }
+                      />
+                      <input
+                        className="shop-input amount"
+                        value={item.amount ?? ''}
+                        placeholder="Menge"
+                        aria-label={`Menge für ${item.name || dish}`}
+                        onChange={(e) =>
+                          updateShoppingItem(item.id, {
+                            amount: e.target.value,
+                          })
+                        }
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      className="btn ghost sm shop-remove"
+                      aria-label={`${item.name || 'Zutat'} entfernen`}
+                      onClick={() => removeShoppingItem(item.id)}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </section>
+            )
+          })
         )}
-      </ul>
+      </div>
 
       {settings.bring.lastPushItems?.length ? (
         <div className="panel stack">
@@ -1593,7 +1989,7 @@ function SettingsView() {
         <h2>Gemeinsamer Speicher</h2>
         <p className="lede">
           Auf dem Webspace liegen Rezepte, Pitches und der Wochenplan in einer
-          mitgelieferten <strong>SQLite</strong>-Datei — Darius und Wendy sehen
+          mitgelieferten <strong>SQLite</strong>-Datei — Daryoush und Wendi sehen
           denselben Stand. Lokal ohne PHP nur im Browser.
         </p>
         <div
@@ -1840,8 +2236,9 @@ function SettingsView() {
               </p>
             ) : null}
             <p className="muted tiny">
-              Nach dem Login: unter Rezepte „Cookidoo import“ mit Link oder ID
-              (z.&nbsp;B. r59322). Läuft über <code>api/cookidoo.php</code>.
+              Nach dem Login: unter Rezepte „Cookidoo stöbern“ — suchen, Listen
+              öffnen oder Link/ID importieren. Läuft über{' '}
+              <code>api/cookidoo.php</code>.
             </p>
           </div>
         ) : null}

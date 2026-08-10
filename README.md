@@ -1,6 +1,6 @@
 # Wochenkochen
 
-Mobile-first weekly meal planner for **Darius & Wendy**.
+Mobile-first weekly meal planner for **Daryoush & Wendi**.
 
 Pitch dishes → vote → lock the week → then consciously send ingredients to **Bring!**. Optional **Cookidoo** login to import recipes.
 
@@ -47,7 +47,7 @@ npm run build   # refreshes www/
 
 | Step | What |
 |------|------|
-| 1 | Login as **Darius** or **Wendy** |
+| 1 | Login as **Daryoush** or **Wendi** |
 | 2 | **Pitch** ideas (Yes / Maybe / Nope). Bases like *Reis* can get different sides. |
 | 3 | **Plan** — assign meals to days (base → then side if needed) |
 | 4 | **Woche festnageln** — plan freezes |
@@ -97,7 +97,7 @@ node scripts/logic-check.mjs
 
 ## Notes
 
-- On a PHP host, household data (recipes, pitches, week plan, settings) syncs via **SQLite** (`api/store.php` → `api/data/wochenmahl.sqlite`) so Darius & Wendy share one stand  
+- On a PHP host, household data (recipes, pitches, week plan, settings) syncs via **SQLite** (`api/store.php` → `api/data/wochenmahl.sqlite`) so Daryoush & Wendi share one stand  
 - Browser `localStorage` is still used as cache / offline fallback; “who is logged in” stays device-local  
 - Local Vite without PHP = browser-only (see Settings → Gemeinsamer Speicher)  
 - Passwords are not persisted — only session tokens after a successful link (those tokens are part of shared settings once linked)  

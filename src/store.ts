@@ -9,6 +9,7 @@ import {
 import {
   DEFAULT_SETTINGS,
   SEED_RECIPES,
+  WEEKDAYS,
   createFreshWeek,
   createWeekForMonday,
   mondayOf,
@@ -19,6 +20,7 @@ import type {
   Ingredient,
   Pitch,
   Recipe,
+  ShoppingItem,
   UserId,
   WeekPlan,
   Weekday,
@@ -31,10 +33,15 @@ interface Store {
   weeks: WeekPlan[]
   activeWeekId: string
   settings: AppSettings
-  shoppingDraft: Ingredient[]
+  shoppingDraft: ShoppingItem[]
   login: (user: UserId) => void
   logout: () => void
   addRecipe: (recipe: Omit<Recipe, 'id' | 'createdAt' | 'createdBy'>) => void
+  updateRecipe: (
+    id: string,
+    patch: Omit<Recipe, 'id' | 'createdAt' | 'createdBy'>,
+  ) => void
+  duplicateRecipe: (id: string) => string | null
   addImportedRecipe: (
     recipe: Omit<Recipe, 'id' | 'createdAt' | 'createdBy'>,
   ) => string
@@ -66,8 +73,11 @@ interface Store {
   lockWeek: () => void
   reopenWeek: () => void
   selectWeekByDate: (date: Date) => void
-  buildShoppingList: () => Ingredient[]
-  setShoppingDraft: (items: Ingredient[]) => void
+  buildShoppingList: () => ShoppingItem[]
+  setShoppingDraft: (items: ShoppingItem[]) => void
+  updateShoppingItem: (id: string, patch: Partial<ShoppingItem>) => void
+  removeShoppingItem: (id: string) => void
+  addShoppingItem: () => void
   updateBring: (patch: Partial<AppSettings['bring']>) => void
   updateCookidoo: (patch: Partial<AppSettings['cookidoo']>) => void
   linkBring: (
@@ -95,23 +105,6 @@ function uid(prefix: string) {
 function activeWeek(get: () => Pick<Store, 'weeks' | 'activeWeekId'>) {
   const state = get()
   return state.weeks.find((w) => w.id === state.activeWeekId)
-}
-
-function mergeIngredients(items: Ingredient[]): Ingredient[] {
-  const map = new Map<string, Ingredient>()
-  for (const item of items) {
-    const key = item.name.trim().toLowerCase()
-    if (!key) continue
-    const existing = map.get(key)
-    if (!existing) {
-      map.set(key, { ...item, name: item.name.trim() })
-    } else if (item.amount && existing.amount && item.amount !== existing.amount) {
-      existing.amount = `${existing.amount} + ${item.amount}`
-    } else if (item.amount && !existing.amount) {
-      existing.amount = item.amount
-    }
-  }
-  return [...map.values()].sort((a, b) => a.name.localeCompare(b.name, 'de'))
 }
 
 function parseIngredientLines(text: string): Ingredient[] {
@@ -163,6 +156,42 @@ export const useStore = create<Store>()(
             createdAt: new Date().toISOString(),
           }
           set({ recipes: [next, ...get().recipes] })
+        },
+
+        updateRecipe: (id, patch) => {
+          set({
+            recipes: get().recipes.map((r) =>
+              r.id === id
+                ? {
+                    ...r,
+                    ...patch,
+                    kind: patch.kind ?? r.kind ?? 'meal',
+                    id: r.id,
+                    createdBy: r.createdBy,
+                    createdAt: r.createdAt,
+                  }
+                : r,
+            ),
+          })
+        },
+
+        duplicateRecipe: (id) => {
+          const user = get().currentUser
+          if (!user) return null
+          const source = get().recipes.find((r) => r.id === id)
+          if (!source) return null
+          const nextId = uid('r')
+          const next: Recipe = {
+            ...source,
+            id: nextId,
+            title: `${source.title} (Kopie)`,
+            createdBy: user,
+            createdAt: new Date().toISOString(),
+            ingredients: source.ingredients.map((i) => ({ ...i })),
+            tags: [...source.tags],
+          }
+          set({ recipes: [next, ...get().recipes] })
+          return nextId
         },
 
         addImportedRecipe: (recipe) => {
@@ -350,23 +379,95 @@ export const useStore = create<Store>()(
             return []
           }
           const { recipes } = get()
-          const items: Ingredient[] = []
+          const dayLabel = (day: Weekday) =>
+            WEEKDAYS.find((d) => d.id === day)?.label ?? day
+          const items: ShoppingItem[] = []
           for (const slot of week.slots) {
             if (slot.recipeId) {
               const recipe = recipes.find((r) => r.id === slot.recipeId)
-              if (recipe) items.push(...recipe.ingredients)
+              if (recipe) {
+                const dish = `${recipe.title} (${dayLabel(slot.day)})`
+                for (const ing of recipe.ingredients) {
+                  items.push({
+                    id: uid('shop'),
+                    name: ing.name,
+                    amount: ing.amount,
+                    dish,
+                    day: slot.day,
+                  })
+                }
+              }
+            } else if (slot.title?.trim()) {
+              items.push({
+                id: uid('shop'),
+                name: slot.title.trim(),
+                dish: `${slot.title.trim()} (${dayLabel(slot.day)})`,
+                day: slot.day,
+              })
             }
             if (slot.sideRecipeId) {
               const side = recipes.find((r) => r.id === slot.sideRecipeId)
-              if (side) items.push(...side.ingredients)
+              if (side) {
+                const dish = `${side.title} (${dayLabel(slot.day)})`
+                for (const ing of side.ingredients) {
+                  items.push({
+                    id: uid('shop'),
+                    name: ing.name,
+                    amount: ing.amount,
+                    dish,
+                    day: slot.day,
+                  })
+                }
+              }
+            } else if (slot.sideTitle?.trim()) {
+              items.push({
+                id: uid('shop'),
+                name: slot.sideTitle.trim(),
+                dish: `${slot.sideTitle.trim()} (${dayLabel(slot.day)})`,
+                day: slot.day,
+              })
             }
           }
-          const merged = mergeIngredients(items)
-          set({ shoppingDraft: merged })
-          return merged
+          items.sort((a, b) => {
+            const dayCmp = (a.day ?? '').localeCompare(b.day ?? '')
+            if (dayCmp) return dayCmp
+            const dishCmp = a.dish.localeCompare(b.dish, 'de')
+            if (dishCmp) return dishCmp
+            return a.name.localeCompare(b.name, 'de')
+          })
+          set({ shoppingDraft: items })
+          return items
         },
 
         setShoppingDraft: (items) => set({ shoppingDraft: items }),
+
+        updateShoppingItem: (id, patch) => {
+          set({
+            shoppingDraft: get().shoppingDraft.map((item) =>
+              item.id === id ? { ...item, ...patch, id: item.id } : item,
+            ),
+          })
+        },
+
+        removeShoppingItem: (id) => {
+          set({
+            shoppingDraft: get().shoppingDraft.filter((item) => item.id !== id),
+          })
+        },
+
+        addShoppingItem: () => {
+          set({
+            shoppingDraft: [
+              ...get().shoppingDraft,
+              {
+                id: uid('shop'),
+                name: '',
+                amount: '',
+                dish: 'Extra',
+              },
+            ],
+          })
+        },
 
         updateBring: (patch) =>
           set({
@@ -448,8 +549,9 @@ export const useStore = create<Store>()(
             }
           }
           const { settings, shoppingDraft, buildShoppingList } = get()
-          const items =
+          const items = (
             shoppingDraft.length > 0 ? shoppingDraft : buildShoppingList()
+          ).filter((i) => i.name.trim())
           if (!settings.bring.enabled) {
             return {
               ok: false,
@@ -481,16 +583,25 @@ export const useStore = create<Store>()(
               uuid: settings.bring.userUuid,
               accessToken: settings.bring.accessToken,
               listUuid: settings.bring.listUuid,
-              items: items.map((i) => ({
-                name: i.name,
-                amount: i.amount,
-              })),
+              items: items
+                .filter((i) => i.name.trim())
+                .map((i) => ({
+                  name: i.name.trim(),
+                  amount: [i.amount?.trim(), i.dish?.trim()]
+                    .filter(Boolean)
+                    .join(' · '),
+                })),
             })
             const lines =
               res.added ??
-              items.map((i) =>
-                i.amount ? `${i.name} (${i.amount})` : i.name,
-              )
+              items
+                .filter((i) => i.name.trim())
+                .map((i) => {
+                  const bits = [i.name.trim()]
+                  if (i.amount?.trim()) bits.push(i.amount.trim())
+                  if (i.dish?.trim()) bits.push(i.dish.trim())
+                  return bits.join(' · ')
+                })
             get().updateBring({
               lastPushAt: new Date().toISOString(),
               lastPushItems: lines,
@@ -608,7 +719,7 @@ export const useStore = create<Store>()(
       }
     },
     {
-      name: 'wochenkochen-demo-v4',
+      name: 'wochenkochen-demo-v5',
       partialize: (state) => ({
         currentUser: state.currentUser,
         recipes: state.recipes.map((r) => ({
@@ -621,6 +732,26 @@ export const useStore = create<Store>()(
         shoppingDraft: state.shoppingDraft,
         settings: state.settings,
       }),
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as Partial<Store>
+        const draft = Array.isArray(p.shoppingDraft)
+          ? p.shoppingDraft.map((item, i) => {
+              const row = item as ShoppingItem
+              return {
+                id: row.id || `shop-migrated-${i}`,
+                name: row.name ?? '',
+                amount: row.amount,
+                dish: row.dish || 'Unbekannt',
+                day: row.day,
+              } satisfies ShoppingItem
+            })
+          : current.shoppingDraft
+        return {
+          ...current,
+          ...p,
+          shoppingDraft: draft,
+        }
+      },
     },
   ),
 )

@@ -3,13 +3,13 @@ import type { AppSettings, Recipe, User, WeekPlan, WeekSlot } from '../types'
 export const USERS: Record<'darius' | 'wendy', User> = {
   darius: {
     id: 'darius',
-    name: 'Darius',
+    name: 'Daryoush',
     short: 'D',
     color: '#2f6f4e',
   },
   wendy: {
     id: 'wendy',
-    name: 'Wendy',
+    name: 'Wendi',
     short: 'W',
     color: '#b85c38',
   },

@@ -105,3 +105,67 @@ export function importCookidooRecipeApi(input: {
     country: input.country ?? 'de',
   })
 }
+
+export type CookidooBrowseRecipe = {
+  id: string
+  title: string
+  totalTime?: string | null
+  image?: string | null
+}
+
+export type CookidooSearchResult = {
+  ok: boolean
+  message: string
+  recipes?: CookidooBrowseRecipe[]
+  hint?: string
+  searchUrl?: string
+}
+
+export type CookidooListsResult = {
+  ok: boolean
+  message: string
+  lists?: { id: string | null; title: string; count?: number | null }[]
+}
+
+export type CookidooListRecipesResult = {
+  ok: boolean
+  message: string
+  recipes?: CookidooBrowseRecipe[]
+}
+
+export function searchCookidooRecipes(input: {
+  accessToken: string
+  query: string
+  country?: string
+}) {
+  return postJson<CookidooSearchResult>('cookidoo.php', {
+    action: 'search',
+    accessToken: input.accessToken,
+    query: input.query,
+    country: input.country ?? 'de',
+  })
+}
+
+export function listCookidooCollections(input: {
+  accessToken: string
+  country?: string
+}) {
+  return postJson<CookidooListsResult>('cookidoo.php', {
+    action: 'lists',
+    accessToken: input.accessToken,
+    country: input.country ?? 'de',
+  })
+}
+
+export function listCookidooCollectionRecipes(input: {
+  accessToken: string
+  listId: string
+  country?: string
+}) {
+  return postJson<CookidooListRecipesResult>('cookidoo.php', {
+    action: 'listRecipes',
+    accessToken: input.accessToken,
+    listId: input.listId,
+    country: input.country ?? 'de',
+  })
+}

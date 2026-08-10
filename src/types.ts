@@ -42,6 +42,16 @@ export interface Pitch {
 
 export type Weekday = 'mo' | 'di' | 'mi' | 'do' | 'fr' | 'sa' | 'so'
 
+/** Editable shopping-list row after the week is locked */
+export interface ShoppingItem {
+  id: string
+  name: string
+  amount?: string
+  /** Recipe / dish this ingredient comes from */
+  dish: string
+  day?: Weekday
+}
+
 export interface WeekSlot {
   day: Weekday
   recipeId?: string
@@ -106,5 +116,5 @@ export interface AppState {
   weeks: WeekPlan[]
   activeWeekId: string
   settings: AppSettings
-  shoppingDraft: Ingredient[]
+  shoppingDraft: ShoppingItem[]
 }

@@ -636,6 +636,39 @@ p {
   color: var(--muted);
 }
 
+.day-title {
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.day-title-mo {
+  color: #2f6f4e;
+}
+
+.day-title-di {
+  color: #3d6f8a;
+}
+
+.day-title-mi {
+  color: #6b5b95;
+}
+
+.day-title-do {
+  color: #b85c38;
+}
+
+.day-title-fr {
+  color: #c47a1a;
+}
+
+.day-title-sa {
+  color: #8a4b6b;
+}
+
+.day-title-so {
+  color: #9a3b3b;
+}
+
 .day-card.clickable {
   cursor: pointer;
   transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
@@ -793,6 +826,60 @@ p {
 
 .shopping-list {
   display: grid;
+  gap: 14px;
+}
+
+.shop-group {
+  display: grid;
+  gap: 8px;
+}
+
+.shop-group-title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+  padding: 2px 2px 0;
+}
+
+.shop-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.65);
+  border: 1px solid var(--line);
+}
+
+.shop-row-fields {
+  display: grid;
+  grid-template-columns: 1fr minmax(72px, 0.4fr);
+  gap: 8px;
+}
+
+.shop-input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.85);
+  font: inherit;
+  color: var(--ink);
+}
+
+.shop-input.amount {
+  text-align: right;
+}
+
+.shop-remove {
+  flex-shrink: 0;
+}
+
+.shop-row-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 8px;
 }
 
@@ -805,6 +892,26 @@ p {
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.65);
   border: 1px solid var(--line);
+}
+
+.cookidoo-browse-modal {
+  max-height: min(92vh, 780px);
+  overflow: auto;
+}
+
+.cookidoo-results {
+  display: grid;
+  gap: 8px;
+}
+
+.cookidoo-result {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.55);
 }
 
 .modal-backdrop {

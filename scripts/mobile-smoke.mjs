@@ -24,7 +24,8 @@ async function main() {
   const page = await context.newPage()
   const log = []
 
-  // --- Scenario 1: Darius ---
+  // --- Scenario 1: Daryoush ---
+  await page.getByRole('button', { name: /Daryoush/i }).click()
   await page.goto(base, { waitUntil: 'networkidle' })
   await shot(page, '01-login')
   await page.locator('.user-pick button').first().click()
