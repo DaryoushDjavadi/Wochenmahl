@@ -1352,6 +1352,128 @@ p {
   gap: 14px;
 }
 
+.bring-live {
+  gap: 10px;
+  border-color: rgba(184, 228, 255, 0.75);
+  background:
+    linear-gradient(160deg, rgba(184, 228, 255, 0.28), transparent 55%),
+    var(--panel);
+}
+
+.bring-live-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bring-live-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  background: transparent;
+  padding: 4px 2px;
+  text-align: left;
+  color: var(--ink);
+}
+
+.bring-live-toggle-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-pill);
+  background: var(--panel);
+  box-shadow: var(--shadow-1);
+  color: #1a4f75;
+  flex-shrink: 0;
+}
+
+.bring-live-toggle-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.bring-live-toggle-text strong {
+  font-size: 1rem;
+}
+
+.bring-live-refresh {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: var(--radius-pill);
+}
+
+.bring-live-body {
+  padding-top: 2px;
+}
+
+.bring-live-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.bring-live-items li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 18px;
+  background: var(--panel);
+  border: 1px solid rgba(208, 213, 221, 0.7);
+  box-shadow: var(--shadow-1);
+}
+
+.bring-live-items.faint li {
+  opacity: 0.72;
+  box-shadow: none;
+  background: #eef1f4;
+}
+
+.bring-live-name {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.bring-live-spec {
+  text-align: right;
+  flex-shrink: 0;
+  max-width: 55%;
+  overflow-wrap: anywhere;
+}
+
+.bring-live-recent summary {
+  cursor: pointer;
+  font-weight: 700;
+  color: var(--muted);
+  font-size: 0.88rem;
+  padding: 4px 2px;
+}
+
+.bring-live-recent[open] summary {
+  margin-bottom: 8px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spin {
+  animation: spin 0.8s linear infinite;
+}
+
 .shop-group {
   display: grid;
   gap: 8px;

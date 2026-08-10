@@ -4,6 +4,8 @@ import {
   CalendarRange,
   Check,
   ChefHat,
+  ChevronDown,
+  ChevronRight,
   CircleHelp,
   Home,
   Lightbulb,
@@ -11,6 +13,7 @@ import {
   Menu,
   MessageSquarePlus,
   Pin,
+  RefreshCw,
   Search,
   Settings,
   ShoppingBasket,
@@ -26,9 +29,11 @@ import {
   weekIdFromMonday,
 } from './data/seed'
 import {
+  fetchBringList,
   listCookidooCollectionRecipes,
   listCookidooCollections,
   searchCookidooRecipes,
+  type BringListItem,
   type CookidooBrowseRecipe,
 } from './api/integrations'
 import { useStore } from './store'
@@ -1964,6 +1969,7 @@ function ShopView({ onPlan }: { onPlan: () => void }) {
     null,
   )
   const [busy, setBusy] = useState(false)
+  const [bringListKey, setBringListKey] = useState(0)
 
   const week = useMemo(
     () => weeks.find((w) => w.id === activeWeekId),
@@ -2057,6 +2063,7 @@ function ShopView({ onPlan }: { onPlan: () => void }) {
                   const res = await pushToBring()
                   setFlash({ ok: res.ok, message: res.message })
                   setBusy(false)
+                  if (res.ok) setBringListKey((k) => k + 1)
                 }}
               >
                 {busy ? 'Sende…' : 'Jetzt an Bring senden'}
@@ -2088,6 +2095,10 @@ function ShopView({ onPlan }: { onPlan: () => void }) {
           </p>
         ) : null}
       </div>
+
+      {settings.bring.enabled && settings.bring.linked ? (
+        <BringLiveListPanel refreshKey={bringListKey} />
+      ) : null}
 
       {flash ? (
         <div className={`flash ${flash.ok ? '' : 'bad'}`}>{flash.message}</div>
@@ -2166,6 +2177,157 @@ function ShopView({ onPlan }: { onPlan: () => void }) {
               · {line}
             </div>
           ))}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function BringLiveListPanel({ refreshKey }: { refreshKey: number }) {
+  const bring = useStore((s) => s.settings.bring)
+  const [open, setOpen] = useState(true)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [purchase, setPurchase] = useState<BringListItem[]>([])
+  const [recently, setRecently] = useState<BringListItem[]>([])
+  const [loadedAt, setLoadedAt] = useState<string | null>(null)
+
+  const canLoad =
+    Boolean(bring.userUuid && bring.accessToken && bring.listUuid)
+
+  const load = async () => {
+    if (!canLoad) {
+      setError('Bring-Liste nicht konfiguriert.')
+      return
+    }
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await fetchBringList({
+        uuid: bring.userUuid,
+        accessToken: bring.accessToken,
+        listUuid: bring.listUuid,
+      })
+      if (!res.ok) {
+        setError(res.message || 'Liste konnte nicht geladen werden.')
+        setPurchase([])
+        setRecently([])
+      } else {
+        setPurchase(res.purchase ?? [])
+        setRecently(res.recently ?? [])
+        setLoadedAt(new Date().toISOString())
+      }
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : 'Bring-Liste nicht erreichbar.',
+      )
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void load()
+  }, [bring.listUuid, bring.accessToken, bring.userUuid, refreshKey])
+
+  return (
+    <div className="panel stack bring-live">
+      <div className="bring-live-head">
+        <button
+          type="button"
+          className="bring-live-toggle"
+          aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}
+        >
+          <span className="bring-live-toggle-icon" aria-hidden>
+            {open ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+          </span>
+          <span className="bring-live-toggle-text">
+            <strong>Bring-Liste</strong>
+            <span className="muted tiny">
+              {bring.listName || 'Liste'}
+              {loading
+                ? ' · lädt…'
+                : purchase.length
+                  ? ` · ${purchase.length} offen`
+                  : loadedAt
+                    ? ' · leer'
+                    : ''}
+            </span>
+          </span>
+        </button>
+        <button
+          type="button"
+          className="btn ghost sm bring-live-refresh"
+          disabled={loading || !canLoad}
+          aria-label="Bring-Liste aktualisieren"
+          onClick={() => void load()}
+        >
+          <RefreshCw size={16} className={loading ? 'spin' : undefined} />
+        </button>
+      </div>
+
+      {open ? (
+        <div className="bring-live-body stack">
+          {error ? (
+            <p className="muted tiny" style={{ color: 'var(--bad)' }}>
+              {error}
+            </p>
+          ) : null}
+          {!error && !loading && purchase.length === 0 && recently.length === 0 ? (
+            <p className="muted">Auf Bring steht gerade nichts drauf.</p>
+          ) : null}
+          {purchase.length > 0 ? (
+            <ul className="bring-live-items">
+              {purchase.map((item, idx) => (
+                <li
+                  key={item.uuid || `${item.name}-${item.specification}-${idx}`}
+                >
+                  <span className="bring-live-name">{item.name}</span>
+                  {item.specification ? (
+                    <span className="bring-live-spec muted tiny">
+                      {item.specification}
+                    </span>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {recently.length > 0 ? (
+            <details className="bring-live-recent">
+              <summary>
+                Zuletzt erledigt ({recently.length})
+              </summary>
+              <ul className="bring-live-items faint">
+                {recently.map((item, idx) => (
+                  <li
+                    key={
+                      item.uuid ||
+                      `recent-${item.name}-${item.specification}-${idx}`
+                    }
+                  >
+                    <span className="bring-live-name">{item.name}</span>
+                    {item.specification ? (
+                      <span className="bring-live-spec muted tiny">
+                        {item.specification}
+                      </span>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          ) : null}
+          {loadedAt ? (
+            <p className="muted tiny">
+              Stand:{' '}
+              {new Date(loadedAt).toLocaleString('de-DE', {
+                hour: '2-digit',
+                minute: '2-digit',
+                day: '2-digit',
+                month: '2-digit',
+              })}
+            </p>
+          ) : null}
         </div>
       ) : null}
     </div>

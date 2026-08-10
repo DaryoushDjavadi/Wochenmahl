@@ -89,6 +89,30 @@ export function pushItemsToBring(input: {
   })
 }
 
+export type BringListItem = {
+  name: string
+  specification: string
+  uuid?: string
+}
+
+export type BringGetListResult = {
+  ok: boolean
+  message: string
+  purchase?: BringListItem[]
+  recently?: BringListItem[]
+}
+
+export function fetchBringList(input: {
+  uuid: string
+  accessToken: string
+  listUuid: string
+}) {
+  return postJson<BringGetListResult>('bring.php', {
+    action: 'getList',
+    ...input,
+  })
+}
+
 export function linkCookidooAccount(
   email: string,
   password: string,

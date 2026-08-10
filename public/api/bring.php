@@ -191,4 +191,86 @@ if ($action === 'push') {
     ]);
 }
 
+if ($action === 'getList') {
+    $uuid = trim((string) ($input['uuid'] ?? ''));
+    $token = trim((string) ($input['accessToken'] ?? ''));
+    $listUuid = trim((string) ($input['listUuid'] ?? ''));
+    if ($uuid === '' || $token === '' || $listUuid === '') {
+        respond(400, ['ok' => false, 'message' => 'Token und Liste nötig.']);
+    }
+
+    $res = http_request(
+        'GET',
+        BRING_BASE . 'bringlists/' . rawurlencode($listUuid),
+        bring_headers([
+            'Authorization: Bearer ' . $token,
+            'X-BRING-USER-UUID: ' . $uuid,
+            'Accept: application/json',
+        ])
+    );
+
+    if (!$res['ok'] || !$res['json']) {
+        $msg = $res['json']['message'] ?? ($res['raw'] ?: 'Liste konnte nicht geladen werden');
+        respond($res['status'] >= 400 ? $res['status'] : 502, [
+            'ok' => false,
+            'message' => is_string($msg) ? $msg : 'Liste konnte nicht geladen werden',
+        ]);
+    }
+
+    $itemsRoot = $res['json']['items'] ?? $res['json'];
+    $purchaseRaw = [];
+    $recentlyRaw = [];
+    if (is_array($itemsRoot)) {
+        if (isset($itemsRoot['purchase']) && is_array($itemsRoot['purchase'])) {
+            $purchaseRaw = $itemsRoot['purchase'];
+        }
+        if (isset($itemsRoot['recently']) && is_array($itemsRoot['recently'])) {
+            $recentlyRaw = $itemsRoot['recently'];
+        }
+    }
+
+    $mapItem = static function (array $item): ?array {
+        $name = trim((string) ($item['itemId'] ?? $item['name'] ?? $item['purchase'] ?? ''));
+        if ($name === '') {
+            return null;
+        }
+        $spec = trim((string) ($item['specification'] ?? $item['spec'] ?? ''));
+        return [
+            'name' => $name,
+            'specification' => $spec,
+            'uuid' => (string) ($item['uuid'] ?? ''),
+        ];
+    };
+
+    $purchase = [];
+    foreach ($purchaseRaw as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+        $mapped = $mapItem($item);
+        if ($mapped) {
+            $purchase[] = $mapped;
+        }
+    }
+
+    $recently = [];
+    foreach ($recentlyRaw as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+        $mapped = $mapItem($item);
+        if ($mapped) {
+            $recently[] = $mapped;
+        }
+    }
+
+    respond(200, [
+        'ok' => true,
+        'message' => count($purchase) . ' Artikel auf der Liste'
+            . (count($recently) ? ' · ' . count($recently) . ' erledigt' : ''),
+        'purchase' => $purchase,
+        'recently' => $recently,
+    ]);
+}
+
 respond(400, ['ok' => false, 'message' => 'Unbekannte Aktion.']);
