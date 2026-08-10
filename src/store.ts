@@ -13,6 +13,7 @@ import {
   createFreshWeek,
   createWeekForMonday,
   mondayOf,
+  repairRecipeCookidooLinks,
   weekIdFromMonday,
 } from './data/seed'
 import type {
@@ -777,6 +778,9 @@ export const useStore = create<Store>()(
           ...current,
           ...p,
           shoppingDraft: draft,
+          recipes: repairRecipeCookidooLinks(
+            (Array.isArray(p.recipes) ? p.recipes : current.recipes) as Recipe[],
+          ),
         }
       },
     },

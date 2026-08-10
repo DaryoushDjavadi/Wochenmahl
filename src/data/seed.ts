@@ -154,9 +154,9 @@ export const SEED_RECIPES: Recipe[] = [
       { name: 'Zwiebel', amount: '1' },
       { name: 'Reis', amount: '250g' },
     ],
-    cookidooUrl: 'https://cookidoo.de/recipes/recipe/de-DE/r59322',
-    cookidooId: 'r59322',
-    notes: 'Beispiel-Cookidoo-Rezept (Link zum Testen).',
+    cookidooUrl: 'https://cookidoo.de/recipes/recipe/de-DE/r505099',
+    cookidooId: 'r505099',
+    notes: 'Cookidoo: Kichererbsen-Kokos-Curry.',
     createdBy: 'wendy',
     createdAt: '2026-08-03T10:00:00.000Z',
   },
@@ -258,6 +258,25 @@ export function weekIdFromMonday(monday: Date): string {
   const m = String(monday.getMonth() + 1).padStart(2, '0')
   const day = String(monday.getDate()).padStart(2, '0')
   return `week-${y}-${m}-${day}`
+}
+
+/** Fix known wrong demo Cookidoo links that were already synced/persisted. */
+export function repairRecipeCookidooLinks(recipes: Recipe[]): Recipe[] {
+  return recipes.map((r) => {
+    const wrongId =
+      r.cookidooId === 'r59322' ||
+      (typeof r.cookidooUrl === 'string' && r.cookidooUrl.includes('/r59322'))
+    const looksLikeCurry =
+      /kichererbsen/i.test(r.title) && /kokos|curry/i.test(r.title)
+    if (wrongId && (looksLikeCurry || r.id === 'r-curry')) {
+      return {
+        ...r,
+        cookidooId: 'r505099',
+        cookidooUrl: 'https://cookidoo.de/recipes/recipe/de-DE/r505099',
+      }
+    }
+    return r
+  })
 }
 
 export function weekLabelFromMonday(monday: Date): string {

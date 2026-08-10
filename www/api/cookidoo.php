@@ -401,11 +401,21 @@ function http_cookied(
     $methodUse = strtoupper($method);
     $setCookieHeaders = [];
     $ch = curl_init($url);
-    $reqHeaders = array_merge([
+    $reqHeaders = [
         'User-Agent: ' . BROWSER_UA,
         'Accept-Language: de-DE,de;q=0.9,en;q=0.8',
-        'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,*/*;q=0.7',
-    ], $headers);
+    ];
+    $hasAccept = false;
+    foreach ($headers as $h) {
+        if (preg_match('/^Accept:/i', $h)) {
+            $hasAccept = true;
+            break;
+        }
+    }
+    if (!$hasAccept) {
+        $reqHeaders[] = 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,*/*;q=0.7';
+    }
+    $reqHeaders = array_merge($reqHeaders, $headers);
 
     $opts = [
         CURLOPT_RETURNTRANSFER => true,
